@@ -4,7 +4,7 @@ clash-meta.exe.bak
 VPNManager.exe
 cache.db
 
-# 配置（含代理凭据，使用 clash-config.example.yaml 作为模板）
+# 配置（含代理凭据）
 clash-config.yaml
 subscription.yaml
 
@@ -12,6 +12,13 @@ subscription.yaml
 ui/
 geodata/
 ruleset/
+GeoIP.dat
+GeoSite.dat
+Country.mmdb
+
+# Runtime
+.vpn-app.lock
+clash-config.bootstrap.yaml
 
 # Python
 __pycache__/

@@ -49,6 +49,12 @@
 
 ---
 
+## 系统要求 | Requirements
+
+- **Windows 10/11** (x64)
+- **Python 3.8+** (推荐 3.10+)
+- **依赖**: `pip install flask pyyaml requests pystray pillow`
+
 ## 快速开始 | Quick Start
 
 > 三步即可，大道至简。
@@ -58,13 +64,16 @@
 .\update-resources.ps1
 
 # 第二步：安装依赖
-pip install flask pyyaml
+pip install flask pyyaml requests pystray pillow
 
 # 第三步：配置你的代理节点
 copy clash-config.example.yaml clash-config.yaml
 # 编辑 clash-config.yaml → 填入你的代理服务器和密码
 
-# 启动（自动打开浏览器）
+# 启动托盘应用（推荐，自动编排所有组件）
+pythonw vpn-app.pyw
+
+# 或仅启动 Web UI（无托盘）
 python vpn-manager.py
 ```
 
@@ -113,8 +122,15 @@ python vpn-manager.py
 ## 架构 | Architecture
 
 ```text
+vpn-app.pyw（系统托盘编排器，推荐入口）
+├── 启动 clash-meta.exe ─── 代理引擎
+├── 启动 vpn-manager.py  ─── Flask Web UI
+├── 系统托盘图标 ─── 动态状态(🟢🟡🔴⚪) + 右键菜单
+├── 状态轮询(5s) ─── 图标/tooltip自动更新
+└── 退出清理 ─── 关闭代理 + 停止进程 + 释放锁
+
 vpn-manager.py（1892行，单文件即全部）
-├── Flask 后端 ─── 38个 API 端点
+├── Flask 后端 ─── 39个 API 端点
 ├── 嵌入式前端 ─── HTML/CSS/JS 7标签页响应式UI
 └── 代理守护线程 ─── 自动恢复系统代理
 
@@ -122,16 +138,14 @@ clash-meta.exe（Mihomo 内核）
 ├── 混合代理 ─── :7890（HTTP+SOCKS5）
 ├── RESTful API ─── :9097
 └── MetaCubeXD面板 ─── :9097/ui
-
-自研Web UI ─── :9098
 ```
 
 ## 文件结构 | Files
 
 | 文件 | 用途 |
 |------|------|
+| `vpn-app.pyw` | 系统托盘编排器（推荐入口，自动启动所有组件） |
 | `vpn-manager.py` | 核心：Flask后端 + 嵌入式前端（1892行） |
-| `clash-config.example.yaml` | 配置模板（复制为 `clash-config.yaml` 后使用） |
 | `proxy-manager.ps1` | PowerShell 命令行管理脚本 |
 | `gen_config.py` | 订阅→配置生成器（保留按应用路由规则） |
 | `update-resources.ps1` | 一键更新面板/地理数据/内核 |

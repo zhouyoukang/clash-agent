@@ -646,10 +646,8 @@ def api_logs():
     """Get recent logs by pulling from Clash log level endpoint"""
     level = request.args.get('level', 'info')
     limit = int(request.args.get('limit', '100'))
-    d = clash_api(f'/logs?level={level}&limit={limit}')
-    # Clash /logs is a streaming endpoint, so we use a snapshot approach
-    # Instead, pull from /connections and /providers for log-like data
-    # For real logs we'll capture from Clash API in a non-blocking way
+    # Clash /logs is a streaming SSE endpoint — calling it blocks forever
+    # Frontend uses WebSocket directly to Clash API for real-time logs
     return jsonify({'ok': True, 'logs': [], 'note': '使用工具页的MetaCubeXD面板查看完整日志流'})
 
 @app.route('/api/connections/close', methods=['POST'])
@@ -702,7 +700,7 @@ def api_config_reload():
     try:
         payload = json.dumps({'path': CLASH_CONFIG}).encode()
         req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs?force=true', data=payload, method='PUT', headers={'Content-Type': 'application/json'})
-        urllib.request.urlopen(req, timeout=10)
+        urllib.request.urlopen(req, timeout=30)
         return jsonify({'ok': True, 'msg': '配置已重载'})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)})
@@ -1879,13 +1877,15 @@ setInterval(refreshSpeed, 2000);
 if __name__ == '__main__':
     port = 9098
     url = f'http://127.0.0.1:{port}'
+    no_auto = '--no-auto' in sys.argv
     print(f"VPN Manager v3.5 - 按应用智能路由")
     print(f"目录: {BASE_DIR}")
     print(f"管理面板: {url}")
     print(f"MetaCubeXD: http://127.0.0.1:{API_PORT}/ui/")
-    # Auto-start clash-meta if not running
-    if not check_port(MIXED_PORT) and os.path.isfile(CLASH_META):
-        print("正在启动代理引擎...")
-        subprocess.Popen([CLASH_META, '-d', BASE_DIR, '-f', CLASH_CONFIG], creationflags=0x08000000)
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    if not no_auto:
+        # Auto-start clash-meta if not running
+        if not check_port(MIXED_PORT) and os.path.isfile(CLASH_META):
+            print("正在启动代理引擎...")
+            subprocess.Popen([CLASH_META, '-d', BASE_DIR, '-f', CLASH_CONFIG], creationflags=0x08000000)
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     app.run(host='127.0.0.1', port=port, debug=False)

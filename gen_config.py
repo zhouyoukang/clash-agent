@@ -8,6 +8,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _candidates = [
     os.path.join(BASE_DIR, 'subscription.yaml'),
     os.path.join(os.path.expanduser('~'), '.config', 'clash-verge', 'profiles', 'subscription.yaml'),
+    os.path.join(os.path.expanduser('~'), '.config', 'clash-verge', 'profiles', 'sakuracat_sub.yaml'),
 ]
 src = None
 for _c in _candidates:
@@ -77,8 +78,8 @@ if os.path.isfile(out):
         for rule in (old_cfg or {}).get('rules', []):
             if rule.startswith('PROCESS-NAME,'):
                 existing_process_rules.append(f'  - {rule}')
-    except:
-        pass
+    except Exception as e:
+        print(f'WARNING: Failed to read existing process rules: {e}')
 
 process_rules_block = '\n'.join(existing_process_rules) if existing_process_rules else ''
 process_rules_section = f"\n  # === 按应用路由（由 VPN Manager Web UI 管理）===\n{process_rules_block}\n" if process_rules_block else ''
@@ -99,8 +100,11 @@ log-level: info           # 日志级别: silent/error/warning/info/debug
 external-controller: 127.0.0.1:9097   # RESTful API
 external-ui: ui                       # MetaCubeXD 面板目录
 
+# --- 进程匹配 ---
+find-process-mode: strict    # 按应用路由的基础
+
 # --- 地理数据（Loyalsoldier 增强版）---
-geodatamode: true
+geodata-mode: true
 geox-url:
   geoip: https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
   geosite: https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat

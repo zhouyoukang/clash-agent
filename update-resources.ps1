@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     一键更新 Clash Agent 全部资源（面板/地理数据/内核）
 .EXAMPLE
