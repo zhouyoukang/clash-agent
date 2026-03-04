@@ -1,0 +1,22 @@
+# 二进制
+clash-meta.exe
+clash-meta.exe.bak
+VPNManager.exe
+cache.db
+
+# 配置（含代理凭据，使用 clash-config.example.yaml 作为模板）
+clash-config.yaml
+subscription.yaml
+
+# 下载资源（由 update-resources.ps1 管理）
+ui/
+geodata/
+ruleset/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.spec

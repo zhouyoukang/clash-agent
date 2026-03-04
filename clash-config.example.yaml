@@ -1,0 +1,75 @@
+# ============================================================
+# Mihomo (Clash Meta) - Example Configuration
+# Copy this file to clash-config.yaml and fill in your proxy
+# ============================================================
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9097
+external-ui: ui
+find-process-mode: strict
+
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+  - +.lan
+  - +.local
+  default-nameserver:
+  - 223.5.5.5
+  - 119.29.29.29
+  nameserver:
+  - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
+
+sniffer:
+  enable: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+
+# === Add your proxy nodes here ===
+proxies:
+- name: MyProxy
+  type: trojan          # or ss, vmess, vless, etc.
+  server: your.server.com
+  port: 443
+  password: your-password-here
+  sni: your.server.com
+  skip-cert-verify: false
+
+proxy-groups:
+- name: PROXY
+  type: select
+  proxies:
+  - MyProxy
+  - DIRECT
+
+# === Per-app routing rules (managed by VPN Manager Web UI) ===
+rules:
+- PROCESS-NAME,chrome.exe,PROXY
+- PROCESS-NAME,msedge.exe,PROXY
+- PROCESS-NAME,firefox.exe,PROXY
+- PROCESS-NAME,Windsurf.exe,PROXY
+- PROCESS-NAME,Code.exe,PROXY
+- PROCESS-NAME,git.exe,PROXY
+- PROCESS-NAME,node.exe,PROXY
+- PROCESS-NAME,docker.exe,PROXY
+- PROCESS-NAME,python.exe,PROXY
+- PROCESS-NAME,QQ.exe,DIRECT
+- PROCESS-NAME,Weixin.exe,DIRECT
+- PROCESS-NAME,WeChatAppEx.exe,DIRECT
+- DOMAIN-SUFFIX,cn,DIRECT
+- DOMAIN-KEYWORD,baidu,DIRECT
+- DOMAIN-KEYWORD,bilibili,DIRECT
+- DOMAIN-SUFFIX,local,DIRECT
+- IP-CIDR,192.168.0.0/16,DIRECT
+- IP-CIDR,10.0.0.0/8,DIRECT
+- IP-CIDR,172.16.0.0/12,DIRECT
+- IP-CIDR,127.0.0.0/8,DIRECT
+- MATCH,PROXY
