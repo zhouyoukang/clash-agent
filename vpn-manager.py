@@ -155,7 +155,7 @@ def reload_clash_config():
             data=data, method='PUT',
             headers={'Content-Type': 'application/json'}
         )
-        urllib.request.urlopen(req, timeout=5)
+        urllib.request.urlopen(req, timeout=15)
         return True
     except:
         return False
@@ -451,7 +451,9 @@ def api_quick_on():
     proxy = f'http://127.0.0.1:{MIXED_PORT}'
     run_ps(f'git config --global http.proxy {proxy}')
     run_ps(f'git config --global https.proxy {proxy}')
-    msgs.append('system+git proxy enabled')
+    run_ps(f'npm config set proxy {proxy}')
+    run_ps(f'npm config set https-proxy {proxy}')
+    msgs.append('system+git+npm proxy enabled')
     return jsonify({'ok': check_port(MIXED_PORT), 'msg': '; '.join(msgs)})
 
 @app.route('/api/quick-off', methods=['POST'])
@@ -460,6 +462,8 @@ def api_quick_off():
     run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyEnable -Value 0')
     run_ps('git config --global --unset http.proxy')
     run_ps('git config --global --unset https.proxy')
+    run_ps('npm config delete proxy 2>$null')
+    run_ps('npm config delete https-proxy 2>$null')
     return jsonify({'ok': True, 'msg': 'All proxies disabled, clash-meta still running'})
 
 @app.route('/api/npm/status')
@@ -1617,7 +1621,7 @@ async function dnsQuery() {
     if(d&&d.ok) {
         const result = d.result;
         let html = '';
-        if(result.Answer) html = result.Answer.map(a=>`<div>${a.Name||''} → <strong>${a.data||a.Data||''}</strong> (TTL:${a.TTL||''})</div>`).join('');
+        if(result.Answer) html = result.Answer.map(a=>`<div>${escHtml(a.Name||'')} → <strong>${escHtml(a.data||a.Data||'')}</strong> (TTL:${a.TTL||''})</div>`).join('');
         else html = `<pre style="white-space:pre-wrap">${JSON.stringify(result,null,2)}</pre>`;
         document.getElementById('dnsResult').innerHTML = html;
     } else {
@@ -1641,8 +1645,8 @@ async function updateSubscription() {
     await withLoading('btnSub', async()=>{
         document.getElementById('subResult').textContent = '更新中...';
         const d = await api('/api/subscription/update','POST');
-        if(d&&d.ok) { document.getElementById('subResult').innerHTML = '<span style="color:#4ade80">'+d.msg+'</span>'; toast('订阅更新成功','ok'); }
-        else { document.getElementById('subResult').innerHTML = '<span style="color:#f87171">'+(d?d.msg:'失败')+'</span>'; toast('订阅更新失败','err'); }
+        if(d&&d.ok) { document.getElementById('subResult').innerHTML = '<span style="color:#4ade80">'+escHtml(d.msg)+'</span>'; toast('订阅更新成功','ok'); }
+        else { document.getElementById('subResult').innerHTML = '<span style="color:#f87171">'+escHtml(d?d.msg:'失败')+'</span>'; toast('订阅更新失败','err'); }
     });
 }
 
@@ -1695,7 +1699,7 @@ function startLogStream() {
                 const d = JSON.parse(e.data);
                 const t = new Date().toLocaleTimeString();
                 const cls = 'log-'+(d.type||'info').toLowerCase();
-                logEntries.push(`<div class="log-entry"><span class="log-time">[${t}]</span> <span class="${cls}">[${(d.type||'INFO').toUpperCase()}]</span> ${d.payload||d.message||''}</div>`);
+                logEntries.push(`<div class="log-entry"><span class="log-time">[${t}]</span> <span class="${cls}">[${(d.type||'INFO').toUpperCase()}]</span> ${escHtml(d.payload||d.message||'')}</div>`);
                 if(logEntries.length > 500) logEntries.shift();
                 const container = document.getElementById('logContainer');
                 container.innerHTML = logEntries.join('');
