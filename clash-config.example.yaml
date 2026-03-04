@@ -1,30 +1,43 @@
 # ============================================================
-# Mihomo (Clash Meta) - Example Configuration
-# Copy this file to clash-config.yaml and fill in your proxy
+# Mihomo（Clash Meta）配置模板
+#
+# 使用方法：
+#   1. 复制此文件：copy clash-config.example.yaml clash-config.yaml
+#   2. 修改下方【代理节点】部分，填入你的代理服务器信息
+#   3. 启动：python vpn-manager.py
+#
+# 大道至简 · 三步即可
 # ============================================================
 
-mixed-port: 7890
-allow-lan: false
-mode: rule
-log-level: info
-external-controller: 127.0.0.1:9097
-external-ui: ui
-find-process-mode: strict
+# ☰ 乾 · 基础设置
+mixed-port: 7890          # 混合代理端口（HTTP+SOCKS5 共用）
+allow-lan: false          # 是否允许局域网设备连接（true=允许）
+mode: rule                # 路由模式：rule=规则 / global=全局 / direct=直连
+log-level: info           # 日志级别：silent / error / warning / info / debug
 
+# ☲ 离 · API与面板
+external-controller: 127.0.0.1:9097   # RESTful API 地址
+external-ui: ui                       # MetaCubeXD 面板目录
+
+# ☷ 坤 · 进程匹配（按应用路由的基础）
+find-process-mode: strict  # 进程匹配模式：strict=精确匹配（推荐）
+
+# ☴ 巽 · DNS设置
 dns:
   enable: true
-  enhanced-mode: fake-ip
+  enhanced-mode: fake-ip           # fake-ip 模式，加速DNS解析
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
   - +.lan
   - +.local
-  default-nameserver:
-  - 223.5.5.5
-  - 119.29.29.29
-  nameserver:
-  - https://doh.pub/dns-query
-  - https://dns.alidns.com/dns-query
+  default-nameserver:              # 用于解析 DNS over HTTPS 的地址
+  - 223.5.5.5                      # 阿里DNS
+  - 119.29.29.29                   # 腾讯DNS
+  nameserver:                      # 主DNS服务器
+  - https://doh.pub/dns-query      # 腾讯DoH
+  - https://dns.alidns.com/dns-query  # 阿里DoH
 
+# 流量嗅探（自动识别协议）
 sniffer:
   enable: true
   sniff:
@@ -33,43 +46,64 @@ sniffer:
     TLS:
       ports: [443, 8443]
 
-# === Add your proxy nodes here ===
+# ============================================================
+# 【重要】代理节点 — 请修改为你自己的代理信息
+# ============================================================
+# 支持协议：trojan / ss / vmess / vless / hysteria2 等
+# 你的代理商会提供这些信息（服务器地址、端口、密码等）
 proxies:
-- name: MyProxy
-  type: trojan          # or ss, vmess, vless, etc.
-  server: your.server.com
-  port: 443
-  password: your-password-here
-  sni: your.server.com
+- name: 我的代理                    # 节点名称（随意取）
+  type: trojan                     # 协议类型
+  server: your.server.com          # ← 改为你的服务器地址
+  port: 443                        # ← 改为你的端口
+  password: your-password-here     # ← 改为你的密码
+  sni: your.server.com             # ← 改为你的SNI（通常和server相同）
   skip-cert-verify: false
 
+# 代理组（可添加多个节点）
 proxy-groups:
 - name: PROXY
-  type: select
+  type: select                     # select=手动选择 / url-test=自动测速
   proxies:
-  - MyProxy
-  - DIRECT
+  - 我的代理
+  - DIRECT                         # 直连选项（不走代理）
 
-# === Per-app routing rules (managed by VPN Manager Web UI) ===
+# ============================================================
+# ☷ 坤 · 按应用路由规则（由 VPN Manager Web UI 管理）
+# ============================================================
+# 格式：PROCESS-NAME,进程名,路由方式
+# 路由方式：PROXY=走代理 / DIRECT=直连
+# 提示：在 Web UI 的「应用」标签页可以一键切换，无需手动编辑
 rules:
+  # --- 浏览器 → VPN（访问Google/GitHub/YouTube等）---
 - PROCESS-NAME,chrome.exe,PROXY
 - PROCESS-NAME,msedge.exe,PROXY
 - PROCESS-NAME,firefox.exe,PROXY
+
+  # --- 开发工具 → VPN（下载npm包/Docker镜像/Git仓库）---
 - PROCESS-NAME,Windsurf.exe,PROXY
 - PROCESS-NAME,Code.exe,PROXY
 - PROCESS-NAME,git.exe,PROXY
 - PROCESS-NAME,node.exe,PROXY
 - PROCESS-NAME,docker.exe,PROXY
 - PROCESS-NAME,python.exe,PROXY
+
+  # --- 国内应用 → 直连（更快更稳）---
 - PROCESS-NAME,QQ.exe,DIRECT
 - PROCESS-NAME,Weixin.exe,DIRECT
 - PROCESS-NAME,WeChatAppEx.exe,DIRECT
-- DOMAIN-SUFFIX,cn,DIRECT
+
+  # --- 域名规则 ---
+- DOMAIN-SUFFIX,cn,DIRECT          # 所有.cn域名直连
 - DOMAIN-KEYWORD,baidu,DIRECT
 - DOMAIN-KEYWORD,bilibili,DIRECT
+
+  # --- 局域网直连 ---
 - DOMAIN-SUFFIX,local,DIRECT
 - IP-CIDR,192.168.0.0/16,DIRECT
 - IP-CIDR,10.0.0.0/8,DIRECT
 - IP-CIDR,172.16.0.0/12,DIRECT
 - IP-CIDR,127.0.0.0/8,DIRECT
+
+  # --- 兜底：其余全走代理 ---
 - MATCH,PROXY
