@@ -96,7 +96,7 @@ function Enable-Proxy {
         if(Test-Path $ClashMeta){
             if(-not (Test-Path $ClashConfig)){ Write-Host "  WARNING: $ClashConfig not found" -ForegroundColor Yellow; return }
             Write-Host "  Starting clash-meta..." -ForegroundColor Cyan
-            Start-Process $ClashMeta -ArgumentList "-f `"$ClashConfig`"" -WindowStyle Hidden
+            Start-Process $ClashMeta -ArgumentList "-d `"$BaseDir`" -f `"$ClashConfig`"" -WindowStyle Hidden
             Start-Sleep 3
         } else { Write-Host "  WARNING: $ClashMeta not found" -ForegroundColor Yellow }
     } else { Write-Host "  clash-meta already running" -ForegroundColor Green }

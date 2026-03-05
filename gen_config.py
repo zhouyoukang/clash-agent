@@ -1,4 +1,8 @@
 import re, os, sys
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -22,7 +26,7 @@ with open(src, 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Extract proxy lines (YAML inline format)
-proxy_lines = re.findall(r'^\s+-\s+\{name:.*\}$', content, re.MULTILINE)
+proxy_lines = re.findall(r'^\s+-\s+\{\s*name:.*\}$', content, re.MULTILINE)
 
 proxies_yaml = []
 names_all = []
@@ -39,9 +43,14 @@ def clean_name(raw):
     n = n.strip().lstrip('|').strip()
     return n
 
+GROUP_TYPES = {'select', 'url-test', 'fallback', 'load-balance'}
 for line in proxy_lines:
     m = re.search(r'name:\s*([^,}]+)', line)
     if not m:
+        continue
+    # Skip proxy-group definitions mixed into subscription
+    tm = re.search(r'type:\s*([^,}\s]+)', line)
+    if tm and tm.group(1).strip().lower() in GROUP_TYPES:
         continue
     raw_name = m.group(1).strip()
     name = clean_name(raw_name)
@@ -72,7 +81,8 @@ existing_process_rules = []
 out = os.path.join(BASE_DIR, 'clash-config.yaml')
 if os.path.isfile(out):
     try:
-        import yaml
+        if not yaml:
+            raise ImportError('yaml not available')
         with open(out, 'r', encoding='utf-8') as f:
             old_cfg = yaml.safe_load(f)
         for rule in (old_cfg or {}).get('rules', []):
@@ -99,6 +109,7 @@ log-level: info           # 日志级别: silent/error/warning/info/debug
 # --- API 与面板 ---
 external-controller: 127.0.0.1:9097   # RESTful API
 external-ui: ui                       # MetaCubeXD 面板目录
+secret: clash-agent-local             # API 访问密钥
 
 # --- 进程匹配 ---
 find-process-mode: strict    # 按应用路由的基础
@@ -224,12 +235,26 @@ rule-providers:
     url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/gfw.txt
     path: ./ruleset/gfw.yaml
     interval: 86400
+  anti-ad:           # anti-AD 中文区广告过滤 (10K★)
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-clash.yaml
+    path: ./ruleset/anti-ad.yaml
+    interval: 86400
+  awavenue:          # AWAvenue 广告过滤 (5.7K★)
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Clash.yaml
+    path: ./ruleset/awavenue.yaml
+    interval: 86400
 
 # --- 规则（优先级从上到下）---
 rules:
 {process_rules_section}
   # === 远程规则集 ===
-  - RULE-SET,reject,REJECT        # 广告拦截
+  - RULE-SET,reject,REJECT        # 广告拦截 (Loyalsoldier)
+  - RULE-SET,anti-ad,REJECT       # 广告拦截 (anti-AD 10K★)
+  - RULE-SET,awavenue,REJECT      # 广告拦截 (AWAvenue 5.7K★)
   - RULE-SET,private,DIRECT       # 私有网络直连
   - RULE-SET,lancidr,DIRECT       # 局域网直连
   - RULE-SET,telegramcidr,PROXY   # Telegram走代理

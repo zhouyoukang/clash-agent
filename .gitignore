@@ -10,6 +10,8 @@ subscription.yaml
 
 # 下载资源（由 update-resources.ps1 管理）
 ui/
+yacd/
+tools/
 geodata/
 ruleset/
 GeoIP.dat
@@ -19,6 +21,8 @@ Country.mmdb
 # Runtime
 .vpn-app.lock
 clash-config.bootstrap.yaml
+free-nodes.yaml
+free-nodes-report.json
 
 # Python
 __pycache__/

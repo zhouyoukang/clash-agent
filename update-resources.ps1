@@ -8,7 +8,7 @@
     .\update-resources.ps1 -Only core   # 仅更新内核
 #>
 param(
-    [ValidateSet('all','ui','geo','core')]
+    [ValidateSet('all','ui','geo','core','cfst','yacd','nodes')]
     [string]$Only = 'all'
 )
 
@@ -139,15 +139,96 @@ function Update-Core {
     }
 }
 
+# ===== CloudflareSpeedTest (24.8K★) =====
+function Update-CFSpeedTest {
+    Write-Host "`n[CFSpeedTest] XIU2/CloudflareSpeedTest (24.8K★)" -ForegroundColor Cyan
+    $toolsDir = Join-Path $BaseDir 'tools'
+    New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+
+    try {
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/XIU2/CloudflareSpeedTest/releases/latest' -Proxy $Proxy -Headers $Headers -TimeoutSec 15
+        Write-Host "  最新版本: $($rel.tag_name)" -ForegroundColor Green
+    } catch {
+        Write-Host "  获取版本失败: $_" -ForegroundColor Red; return
+    }
+
+    $asset = $rel.assets | Where-Object { $_.name -match 'windows_amd64' -and $_.name -match '\.zip$' } | Select-Object -First 1
+    if (-not $asset) { Write-Host "  未找到 windows_amd64 包" -ForegroundColor Red; return }
+
+    $zip = Join-Path $toolsDir 'cfst-update.zip'
+    Write-Host "  下载 $($asset.name) ($([math]::Round($asset.size/1MB,1))MB)..."
+    if (Get-WithProxy -Url $asset.browser_download_url -OutFile $zip) {
+        Expand-Archive -Path $zip -DestinationPath $toolsDir -Force
+        Remove-Item $zip -Force
+        $exe = Get-ChildItem $toolsDir -Filter 'CloudflareST*' -Recurse | Select-Object -First 1
+        if ($exe) {
+            Write-Host "  已更新: $($exe.Name) → $toolsDir" -ForegroundColor Green
+            Write-Host "  用法: .\tools\$($exe.Name) -url https://speed.cloudflare.com/__down?bytes=100000000" -ForegroundColor DarkGray
+        }
+    }
+}
+
+# ===== Yacd-meta 备选面板 (707★) =====
+function Update-YacdMeta {
+    Write-Host "`n[Yacd-meta] MetaCubeX/Yacd-meta 备选面板 (707★)" -ForegroundColor Cyan
+    $yacdDir = Join-Path $BaseDir 'yacd'
+
+    try {
+        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/MetaCubeX/Yacd-meta/releases/latest' -Proxy $Proxy -Headers $Headers -TimeoutSec 15
+        Write-Host "  最新版本: $($rel.tag_name)" -ForegroundColor Green
+    } catch {
+        Write-Host "  获取版本失败: $_" -ForegroundColor Red; return
+    }
+
+    $asset = $rel.assets | Where-Object { $_.name -match 'yacd' -and $_.name -match '\.tar\.gz$' } | Select-Object -First 1
+    if (-not $asset) {
+        $asset = $rel.assets | Where-Object { $_.name -match '\.tar\.gz$' } | Select-Object -First 1
+    }
+    if (-not $asset) { Write-Host "  未找到安装包" -ForegroundColor Red; return }
+
+    $tgz = Join-Path $BaseDir 'yacd-meta.tgz'
+    Write-Host "  下载 $($asset.name)..."
+    if (Get-WithProxy -Url $asset.browser_download_url -OutFile $tgz) {
+        if (Test-Path $yacdDir) { Remove-Item $yacdDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $yacdDir -Force | Out-Null
+        Push-Location $yacdDir
+        tar -xzf $tgz 2>&1 | Out-Null
+        Pop-Location
+        Remove-Item $tgz -Force -ErrorAction SilentlyContinue
+        $count = (Get-ChildItem $yacdDir -Recurse -File).Count
+        Write-Host "  已更新: $count 个文件 → $yacdDir" -ForegroundColor Green
+        Write-Host "  使用: 在 clash-config.yaml 中设置 external-ui: yacd" -ForegroundColor DarkGray
+    }
+}
+
+# ===== 免费节点聚合 =====
+function Update-FreeNodes {
+    Write-Host "`n[节点] 免费节点聚合器" -ForegroundColor Cyan
+    $script = Join-Path $BaseDir 'node_aggregator.py'
+    if (-not (Test-Path $script)) {
+        Write-Host "  node_aggregator.py 不存在" -ForegroundColor Red; return
+    }
+    try {
+        $py = & python $script 2>&1
+        $py | ForEach-Object { Write-Host "  $_" }
+        Write-Host "  完成" -ForegroundColor Green
+    } catch {
+        Write-Host "  运行失败: $_" -ForegroundColor Red
+    }
+}
+
 # ===== 主流程 =====
 Write-Host "===== Clash Agent 资源更新 =====" -ForegroundColor Magenta
 Write-Host "代理: $Proxy | 目标: $Only" -ForegroundColor DarkGray
 
 switch ($Only) {
-    'ui'   { Update-Dashboard }
-    'geo'  { Update-GeoData }
-    'core' { Update-Core }
-    'all'  { Update-Dashboard; Update-GeoData; Update-Core }
+    'ui'    { Update-Dashboard }
+    'geo'   { Update-GeoData }
+    'core'  { Update-Core }
+    'cfst'  { Update-CFSpeedTest }
+    'yacd'  { Update-YacdMeta }
+    'nodes' { Update-FreeNodes }
+    'all'   { Update-Dashboard; Update-GeoData; Update-Core; Update-CFSpeedTest }
 }
 
 Write-Host "`n===== 更新完成 =====" -ForegroundColor Green

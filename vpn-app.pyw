@@ -1,20 +1,18 @@
 """
-VPN Manager Desktop App — 系统托盘 + 进程编排 + 状态感知
+VPN Manager v4.0 — 系统托盘 (对标 CFW / Clash Verge / mihomo-party)
 
-架构:
-  vpn-app.pyw (本文件, .pyw=无控制台窗口)
-    ├── 启动 clash-meta.exe (代理引擎)
-    ├── 启动 vpn-manager.py --no-auto (Flask Web UI)
-    ├── 创建系统托盘图标 (pystray)
-    ├── 每5秒轮询状态, 动态更新图标/tooltip
-    ├── 右键菜单: 面板/开关/代理/测试/自启/退出
-    └── 自动打开浏览器到管理面板
+功能清单:
+  1. 管理面板 / MetaCubeXD 面板 (双入口)
+  2. 一键开启 / 一键关闭
+  3. 代理模式切换 (Rule/Global/Direct) — 子菜单+单选
+  4. 系统代理 / TUN模式 / 允许局域网 / 代理守护 — 开关
+  5. 开发者工具子菜单 (Git/NPM代理 + 复制代理命令)
+  6. 代理组子菜单 (动态加载节点, 点击切换)
+  7. 更新订阅 / 重载配置 / 重启内核 / 网络测试 / 关闭所有连接
+  8. 打开配置目录 / 开机自启 / 退出
 
-图标颜色:
-  🟢 绿色 = 引擎运行 + 系统代理开启
-  🟡 黄色 = 引擎运行 + 系统代理关闭
-  🔴 红色 = 引擎未运行
-  ⚪ 灰色 = 启动中/未知
+图标: 🟢引擎+代理  🟡引擎无代理  🔴引擎停止  ⚪启动中
+Tooltip: 模式 | 当前节点 | ↑速度 ↓速度 | 代理状态
 """
 
 import os, sys, time, threading, subprocess, webbrowser, socket, winreg, ctypes
@@ -31,59 +29,47 @@ WEB_PORT = 9098
 CLASH_META = os.path.join(BASE_DIR, 'clash-meta.exe')
 CLASH_CONFIG = os.path.join(BASE_DIR, 'clash-config.yaml')
 VPN_MANAGER = os.path.join(BASE_DIR, 'vpn-manager.py')
-APP_NAME = 'VPN Manager'
+APP_NAME = 'VPN Manager v4.0'
 STARTUP_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 STARTUP_REG_NAME = 'VPNManager'
 CREATE_NO_WINDOW = 0x08000000
-POLL_INTERVAL = 5
+POLL_INTERVAL = 4
 LOCK_FILE = os.path.join(BASE_DIR, '.vpn-app.lock')
+CLASH_API_SECRET = 'clash-agent-local'
+
+PROXY_CMDS = {
+    'Bash/Zsh':  'export http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890',
+    'PowerShell': '$env:http_proxy="http://127.0.0.1:7890"; $env:https_proxy="http://127.0.0.1:7890"; $env:all_proxy="socks5://127.0.0.1:7890"',
+    'CMD':        'set http_proxy=http://127.0.0.1:7890 && set https_proxy=http://127.0.0.1:7890',
+}
 
 
 # ==================== Icon Generation ====================
 def make_icon(fill_color, size=64):
-    """Generate anti-aliased shield icon with checkmark"""
     scale = 4
     big = size * scale
     img = Image.new('RGBA', (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     s = big
-
-    # Shield polygon
     shield = [
-        (s * 0.50, s * 0.04),
-        (s * 0.90, s * 0.22),
-        (s * 0.87, s * 0.60),
-        (s * 0.50, s * 0.96),
-        (s * 0.13, s * 0.60),
-        (s * 0.10, s * 0.22),
+        (s*0.50, s*0.04), (s*0.90, s*0.22), (s*0.87, s*0.60),
+        (s*0.50, s*0.96), (s*0.13, s*0.60), (s*0.10, s*0.22),
     ]
     d.polygon(shield, fill=fill_color)
-
-    # Inner darker border
-    darker = {
-        '#22c55e': '#16a34a', '#eab308': '#a16207',
-        '#ef4444': '#b91c1c', '#94a3b8': '#64748b',
-    }
-    border_color = darker.get(fill_color, '#333333')
-    d.polygon(shield, outline=border_color, width=max(4, s // 32))
-
-    # Checkmark (✓)
+    darker = {'#22c55e':'#16a34a', '#eab308':'#a16207', '#ef4444':'#b91c1c', '#94a3b8':'#64748b'}
+    d.polygon(shield, outline=darker.get(fill_color, '#333'), width=max(4, s//32))
     lw = s // 10
-    check = [(s * 0.27, s * 0.48), (s * 0.43, s * 0.67), (s * 0.73, s * 0.30)]
-    d.line(check, fill='white', width=lw, joint='curve')
-    # Round line caps
-    for pt in check:
+    pts = [(s*0.27, s*0.48), (s*0.43, s*0.67), (s*0.73, s*0.30)]
+    d.line(pts, fill='white', width=lw, joint='curve')
+    for pt in pts:
         r = lw // 2
-        d.ellipse([pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r], fill='white')
-
+        d.ellipse([pt[0]-r, pt[1]-r, pt[0]+r, pt[1]+r], fill='white')
     return img.resize((size, size), Image.LANCZOS)
 
 
 ICONS = {
-    'green':  make_icon('#22c55e'),
-    'yellow': make_icon('#eab308'),
-    'red':    make_icon('#ef4444'),
-    'gray':   make_icon('#94a3b8'),
+    'green': make_icon('#22c55e'), 'yellow': make_icon('#eab308'),
+    'red':   make_icon('#ef4444'), 'gray':   make_icon('#94a3b8'),
 }
 
 
@@ -99,8 +85,7 @@ def check_port(port):
         return False
 
 
-def api_call(path, method='GET', data=None, timeout=5):
-    """Call VPN Manager Flask API"""
+def api(path, method='GET', data=None, timeout=5):
     try:
         url = f'http://127.0.0.1:{WEB_PORT}{path}'
         if method == 'POST':
@@ -112,45 +97,64 @@ def api_call(path, method='GET', data=None, timeout=5):
         return None
 
 
+def set_clipboard(text):
+    try:
+        ctypes.windll.user32.OpenClipboard(0)
+        ctypes.windll.user32.EmptyClipboard()
+        data = text.encode('utf-16-le') + b'\x00\x00'
+        h = ctypes.windll.kernel32.GlobalAlloc(0x0042, len(data))
+        p = ctypes.windll.kernel32.GlobalLock(h)
+        ctypes.cdll.msvcrt.memcpy(ctypes.c_void_p(p), data, len(data))
+        ctypes.windll.kernel32.GlobalUnlock(h)
+        ctypes.windll.user32.SetClipboardData(13, h)
+        ctypes.windll.user32.CloseClipboard()
+    except Exception:
+        pass
+
+
+def fmt_speed(bps):
+    if bps < 1024: return f'{bps}B/s'
+    if bps < 1048576: return f'{bps/1024:.1f}K/s'
+    if bps < 1073741824: return f'{bps/1048576:.1f}M/s'
+    return f'{bps/1073741824:.2f}G/s'
+
+
 # ==================== Process Management ====================
 def start_clash_meta():
-    """Start clash-meta engine if not already running"""
-    if check_port(MIXED_PORT):
-        return True
-    if not os.path.isfile(CLASH_META) or not os.path.isfile(CLASH_CONFIG):
-        return False
-    subprocess.Popen(
-        [CLASH_META, '-d', BASE_DIR, '-f', CLASH_CONFIG],
-        creationflags=CREATE_NO_WINDOW
-    )
+    if check_port(MIXED_PORT): return True
+    if not os.path.isfile(CLASH_META) or not os.path.isfile(CLASH_CONFIG): return False
+    subprocess.Popen([CLASH_META, '-d', BASE_DIR, '-f', CLASH_CONFIG], creationflags=CREATE_NO_WINDOW)
     for _ in range(15):
         time.sleep(1)
-        if check_port(MIXED_PORT):
-            return True
+        if check_port(MIXED_PORT): return True
     return False
 
 
 def start_flask_server():
-    """Start vpn-manager.py Flask server, return Popen handle"""
-    if check_port(WEB_PORT):
-        return None  # Already running (externally)
-    if not os.path.isfile(VPN_MANAGER):
-        return None
-    # Use pythonw.exe if available (no console)
+    if check_port(WEB_PORT): return None
+    if not os.path.isfile(VPN_MANAGER): return None
     python = sys.executable
     pythonw = os.path.join(os.path.dirname(python), 'pythonw.exe')
-    if os.path.isfile(pythonw):
-        python = pythonw
-    proc = subprocess.Popen(
-        [python, VPN_MANAGER, '--no-auto'],
-        cwd=BASE_DIR,
-        creationflags=CREATE_NO_WINDOW
-    )
+    if os.path.isfile(pythonw): python = pythonw
+    proc = subprocess.Popen([python, VPN_MANAGER, '--no-auto'], cwd=BASE_DIR, creationflags=CREATE_NO_WINDOW)
     for _ in range(10):
         time.sleep(1)
-        if check_port(WEB_PORT):
-            return proc
+        if check_port(WEB_PORT): return proc
     return proc
+
+
+def restart_clash_core():
+    try:
+        subprocess.run(['taskkill', '/F', '/IM', 'clash-meta.exe'],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+        time.sleep(1)
+        subprocess.Popen([CLASH_META, '-d', BASE_DIR, '-f', CLASH_CONFIG], creationflags=CREATE_NO_WINDOW)
+        for _ in range(10):
+            time.sleep(1)
+            if check_port(MIXED_PORT): return True
+        return False
+    except Exception:
+        return False
 
 
 # ==================== Windows Startup ====================
@@ -170,15 +174,11 @@ def set_startup(enable):
         if enable:
             app_path = os.path.abspath(__file__)
             pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
-            if not os.path.isfile(pythonw):
-                pythonw = sys.executable
-            winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ,
-                              f'"{pythonw}" "{app_path}"')
+            if not os.path.isfile(pythonw): pythonw = sys.executable
+            winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ, f'"{pythonw}" "{app_path}"')
         else:
-            try:
-                winreg.DeleteValue(key, STARTUP_REG_NAME)
-            except Exception:
-                pass
+            try: winreg.DeleteValue(key, STARTUP_REG_NAME)
+            except Exception: pass
         winreg.CloseKey(key)
     except Exception:
         pass
@@ -193,15 +193,22 @@ class VPNTrayApp:
         self.icon = None
         self._startup = is_startup_enabled()
         self._npm_on = False
-        self._traffic = {'up': 0, 'down': 0}
+        self._speed_up = 0
+        self._speed_down = 0
+        self._prev_ul = 0
+        self._prev_dl = 0
+        self._mode = 'rule'
+        self._tun_on = False
+        self._allow_lan = False
+        self._guard_on = False
+        self._groups = []
+        self._current_node = ''
 
     # --- Status properties ---
     @property
     def engine_on(self):
-        clash = self.status.get('clash', {})
-        if isinstance(clash, dict):
-            return bool(clash.get('proxy_port', False))
-        return bool(self.status.get('clash_running', False))
+        c = self.status.get('clash', {})
+        return bool(c.get('proxy_port', False)) if isinstance(c, dict) else False
 
     @property
     def proxy_on(self):
@@ -213,59 +220,127 @@ class VPNTrayApp:
         gp = self.status.get('git_proxy', {})
         return bool(gp.get('http')) if isinstance(gp, dict) else False
 
-    @property
-    def npm_on(self):
-        return self._npm_on
-
     # --- Icon / Tooltip ---
     def current_icon(self):
-        if self.engine_on and self.proxy_on:
-            return ICONS['green']
-        elif self.engine_on:
-            return ICONS['yellow']
-        else:
-            return ICONS['red']
+        if self.engine_on and self.proxy_on: return ICONS['green']
+        if self.engine_on: return ICONS['yellow']
+        return ICONS['red']
 
     def current_title(self):
         if not self.status:
-            return f'{APP_NAME} — 启动中...'
-        parts = [APP_NAME]
-        parts.append('引擎:运行' if self.engine_on else '引擎:停止')
-        if self.engine_on:
-            parts.append('代理:开' if self.proxy_on else '代理:关')
-            up = self._traffic.get('up', 0)
-            down = self._traffic.get('down', 0)
-            if up > 0 or down > 0:
-                parts.append(f'↑{_fmt_speed(up)} ↓{_fmt_speed(down)}')
-        return ' | '.join(parts)
+            return f'{APP_NAME}\n启动中...'
+        if not self.engine_on:
+            return f'{APP_NAME}\n引擎: 停止'
+        mode_zh = {'rule': '规则', 'global': '全局', 'direct': '直连'}.get(self._mode, self._mode)
+        node = self._current_node[:20] if self._current_node else '-'
+        line1 = APP_NAME
+        line2 = f'{mode_zh} | {node}'
+        parts = []
+        if self._speed_up > 0 or self._speed_down > 0:
+            parts.append(f'\u2191{fmt_speed(self._speed_up)} \u2193{fmt_speed(self._speed_down)}')
+        flags = []
+        if self.proxy_on: flags.append('代理')
+        if self._tun_on: flags.append('TUN')
+        if self._guard_on: flags.append('守护')
+        if flags: parts.append(' '.join(flags))
+        line3 = ' | '.join(parts) if parts else ('代理:开' if self.proxy_on else '代理:关')
+        return f'{line1}\n{line2}\n{line3}'
 
-    # --- Menu ---
+    # --- Menu builder (called each time menu is shown) ---
     def create_menu(self):
+        def _mode_action(m):
+            def action(icon, item): self._set_mode(m)
+            return action
+        mode_menu = Menu(
+            MenuItem('规则模式 (Rule)', _mode_action('rule'),
+                     checked=lambda item: self._mode == 'rule'),
+            MenuItem('全局代理 (Global)', _mode_action('global'),
+                     checked=lambda item: self._mode == 'global'),
+            MenuItem('直连模式 (Direct)', _mode_action('direct'),
+                     checked=lambda item: self._mode == 'direct'),
+        )
+        copy_items = [MenuItem(f'复制 {k}', self._make_copy(v)) for k, v in PROXY_CMDS.items()]
+        dev_menu = Menu(
+            MenuItem('Git 代理', self._toggle_git, checked=lambda item: self.git_on),
+            MenuItem('NPM 代理', self._toggle_npm, checked=lambda item: self._npm_on),
+            Menu.SEPARATOR, *copy_items,
+        )
+        group_items = self._build_group_menu()
+        groups_menu = Menu(*group_items) if group_items else Menu(
+            MenuItem('(加载中...)', None, enabled=False))
+
         return Menu(
-            MenuItem('VPN 管理面板', self.open_webui, default=True),
-            MenuItem('MetaCubeXD 面板', self.open_metacubexd),
+            MenuItem('管理面板', self.open_webui, default=True),
+            MenuItem('MetaCubeXD', self.open_metacubexd),
             Menu.SEPARATOR,
-            MenuItem('⚡ 一键开启', self.quick_on),
-            MenuItem('⏹ 一键关闭', self.quick_off),
+            MenuItem('\u26a1 一键开启', self.quick_on),
+            MenuItem('\u23f9 一键关闭', self.quick_off),
             Menu.SEPARATOR,
-            MenuItem('系统代理', self.toggle_system_proxy,
-                     checked=lambda item: self.proxy_on),
-            MenuItem('Git 代理', self.toggle_git_proxy,
-                     checked=lambda item: self.git_on),
-            MenuItem('NPM 代理', self.toggle_npm_proxy,
-                     checked=lambda item: self.npm_on),
+            MenuItem('代理模式', mode_menu),
             Menu.SEPARATOR,
-            MenuItem('重载配置', self.reload_config),
-            MenuItem('网络测试', self.test_connectivity),
+            MenuItem('系统代理', self._toggle_sys_proxy, checked=lambda item: self.proxy_on),
+            MenuItem('TUN 模式', self._toggle_tun, checked=lambda item: self._tun_on),
+            MenuItem('允许局域网', self._toggle_lan, checked=lambda item: self._allow_lan),
+            MenuItem('代理守护', self._toggle_guard, checked=lambda item: self._guard_on),
             Menu.SEPARATOR,
-            MenuItem('开机自启', self.toggle_startup,
-                     checked=lambda item: self._startup),
+            MenuItem('开发者工具', dev_menu),
+            MenuItem('代理组', groups_menu),
+            Menu.SEPARATOR,
+            MenuItem('更新订阅', self._update_sub),
+            MenuItem('重载配置', self._reload_config),
+            MenuItem('重启内核', self._restart_core),
+            MenuItem('网络测试', self._test_net),
+            MenuItem('关闭所有连接', self._close_all_conns),
+            Menu.SEPARATOR,
+            MenuItem('打开配置目录', self._open_dir),
+            MenuItem('开机自启', self._toggle_startup, checked=lambda item: self._startup),
             MenuItem('退出', self.quit_app),
         )
 
-    # --- Actions (all run in background threads) ---
-    def _async(self, fn):
+    def _make_node_action(self, gn, nn):
+        def action(icon, item):
+            self._select_node(gn, nn)
+        return action
+
+    def _make_node_check(self, nn, gnow):
+        def check(item):
+            return nn == gnow
+        return check
+
+    def _build_group_menu(self):
+        items = []
+        for g in self._groups[:10]:
+            gname = g.get('name', '?')
+            gnow = g.get('now', '')
+            nodes = g.get('nodes', [])
+            if not nodes:
+                items.append(MenuItem(f'{gname} (空)', None, enabled=False))
+                continue
+            node_items = []
+            for n in nodes[:30]:
+                nname = n.get('name', '?')
+                delay = n.get('delay', 0)
+                dl_str = f' ({delay}ms)' if delay and delay > 0 else ''
+                node_items.append(MenuItem(
+                    f'{nname}{dl_str}',
+                    self._make_node_action(gname, nname),
+                    checked=self._make_node_check(nname, gnow),
+                ))
+            if len(nodes) > 30:
+                node_items.append(MenuItem(f'...还有 {len(nodes)-30} 个', None, enabled=False))
+            label = f'{gname} [{g.get("type","")}] ({gnow or "-"})'
+            items.append(MenuItem(label, Menu(*node_items)))
+        return items
+
+    # --- Actions ---
+    def _bg(self, fn):
         threading.Thread(target=fn, daemon=True).start()
+
+    def _make_copy(self, text):
+        def handler(icon=None, item=None):
+            set_clipboard(text)
+            self.notify('已复制到剪贴板')
+        return handler
 
     def open_webui(self, icon=None, item=None):
         webbrowser.open(f'http://127.0.0.1:{WEB_PORT}')
@@ -276,204 +351,270 @@ class VPNTrayApp:
     def quick_on(self, icon=None, item=None):
         def _do():
             self.notify('正在启动 VPN...')
-            if not check_port(MIXED_PORT):
-                start_clash_meta()
+            if not check_port(MIXED_PORT): start_clash_meta()
             time.sleep(1)
-            api_call('/api/proxy/system', 'POST', {'enable': True}, timeout=10)
-            api_call('/api/proxy/git', 'POST', {'enable': True}, timeout=5)
-            api_call('/api/proxy/npm', 'POST', {'enable': True}, timeout=5)
+            api('/api/quick-on', 'POST', timeout=15)
             time.sleep(0.5)
-            self.refresh_status()
-            self.notify('VPN 已开启 ✅' if self.engine_on else '启动失败')
-        self._async(_do)
+            self._refresh()
+            self.notify('VPN 已开启' if self.engine_on else '启动失败')
+        self._bg(_do)
 
     def quick_off(self, icon=None, item=None):
         def _do():
-            api_call('/api/proxy/system', 'POST', {'enable': False}, timeout=10)
-            api_call('/api/proxy/git', 'POST', {'enable': False}, timeout=5)
-            api_call('/api/proxy/npm', 'POST', {'enable': False}, timeout=5)
+            api('/api/quick-off', 'POST', timeout=10)
             time.sleep(0.5)
-            self.refresh_status()
+            self._refresh()
             self.notify('代理已关闭')
-        self._async(_do)
+        self._bg(_do)
 
-    def toggle_system_proxy(self, icon=None, item=None):
+    def _set_mode(self, mode):
         def _do():
-            api_call('/api/proxy/system', 'POST', {'enable': not self.proxy_on}, timeout=10)
-            time.sleep(0.5)
-            self.refresh_status()
-        self._async(_do)
+            api('/api/mode', 'POST', {'mode': mode}, timeout=5)
+            time.sleep(0.3)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
 
-    def toggle_git_proxy(self, icon=None, item=None):
+    def _toggle_sys_proxy(self, icon=None, item=None):
         def _do():
-            api_call('/api/proxy/git', 'POST', {'enable': not self.git_on}, timeout=10)
+            api('/api/proxy/system', 'POST', {'enable': not self.proxy_on}, timeout=10)
             time.sleep(0.5)
-            self.refresh_status()
-        self._async(_do)
+            self._refresh()
+        self._bg(_do)
 
-    def toggle_npm_proxy(self, icon=None, item=None):
+    def _toggle_tun(self, icon=None, item=None):
         def _do():
-            on = self.npm_on
-            api_call('/api/proxy/npm', 'POST', {'enable': not on}, timeout=10)
+            api('/api/tun', 'POST', {'enable': not self._tun_on}, timeout=5)
             time.sleep(0.5)
-            self.refresh_status()
-        self._async(_do)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
 
-    def reload_config(self, icon=None, item=None):
+    def _toggle_lan(self, icon=None, item=None):
+        def _do():
+            try:
+                import json, urllib.request
+                payload = json.dumps({'allow-lan': not self._allow_lan}).encode()
+                headers = {'Content-Type': 'application/json'}
+                if CLASH_API_SECRET:
+                    headers['Authorization'] = f'Bearer {CLASH_API_SECRET}'
+                req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs',
+                    data=payload, method='PATCH', headers=headers)
+                urllib.request.urlopen(req, timeout=5)
+            except Exception: pass
+            time.sleep(0.3)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
+
+    def _toggle_guard(self, icon=None, item=None):
+        def _do():
+            api('/api/proxy/guard', 'POST', {'enable': not self._guard_on}, timeout=5)
+            time.sleep(0.3)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
+
+    def _toggle_git(self, icon=None, item=None):
+        def _do():
+            api('/api/proxy/git', 'POST', {'enable': not self.git_on}, timeout=10)
+            time.sleep(0.5)
+            self._refresh()
+        self._bg(_do)
+
+    def _toggle_npm(self, icon=None, item=None):
+        def _do():
+            api('/api/proxy/npm', 'POST', {'enable': not self._npm_on}, timeout=10)
+            time.sleep(0.5)
+            self._refresh()
+        self._bg(_do)
+
+    def _select_node(self, group, node):
+        def _do():
+            import urllib.parse
+            api(f'/api/proxies/{urllib.parse.quote(group, safe="")}/select', 'POST', {'name': node}, timeout=5)
+            time.sleep(0.3)
+            self._refresh()
+            self._update_menu()
+            self.notify(f'{group}: {node}')
+        self._bg(_do)
+
+    def _update_sub(self, icon=None, item=None):
+        def _do():
+            self.notify('正在更新订阅...')
+            r = api('/api/subscription/update', 'POST', timeout=60)
+            self.notify(r.get('msg', '完成') if r and r.get('ok') else '订阅更新失败')
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
+
+    def _reload_config(self, icon=None, item=None):
         def _do():
             self.notify('正在重载配置...')
-            r = api_call('/api/config/reload', 'POST', timeout=15)
+            r = api('/api/config/reload', 'POST', timeout=15)
             self.notify('配置已重载' if r and r.get('ok') else '重载失败')
-        self._async(_do)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
 
-    def test_connectivity(self, icon=None, item=None):
+    def _restart_core(self, icon=None, item=None):
+        def _do():
+            self.notify('正在重启内核...')
+            ok = restart_clash_core()
+            self.notify('内核已重启' if ok else '重启失败')
+            time.sleep(1)
+            self._refresh()
+            self._update_menu()
+        self._bg(_do)
+
+    def _test_net(self, icon=None, item=None):
         def _do():
             self.notify('正在测试网络...')
-            r = api_call('/api/connectivity', 'POST', timeout=30)
+            r = api('/api/connectivity', 'POST', timeout=30)
             if r:
                 ok = sum(1 for k in ('google', 'github', 'baidu') if r.get(k) is True)
                 self.notify(f'网络测试: {ok}/3 通过')
             else:
                 self.notify('网络测试失败')
-        self._async(_do)
+        self._bg(_do)
 
-    def toggle_startup(self, icon=None, item=None):
+    def _close_all_conns(self, icon=None, item=None):
+        def _do():
+            api('/api/connections/close-all', 'POST', timeout=5)
+            self.notify('已关闭所有连接')
+        self._bg(_do)
+
+    def _open_dir(self, icon=None, item=None):
+        os.startfile(BASE_DIR)
+
+    def _toggle_startup(self, icon=None, item=None):
         self._startup = not self._startup
         set_startup(self._startup)
 
     def quit_app(self, icon=None, item=None):
         self.running = False
-        # Disable system proxy on exit (prevent user losing internet)
-        try:
-            api_call('/api/proxy/system', 'POST', {'enable': False}, timeout=3)
-        except Exception:
-            pass
-        # Terminate Flask subprocess if we started it
+        try: api('/api/proxy/system', 'POST', {'enable': False}, timeout=3)
+        except Exception: pass
         if self.flask_proc:
-            try:
-                self.flask_proc.terminate()
-            except Exception:
-                pass
-        # Remove lock file
-        try:
-            os.remove(LOCK_FILE)
-        except Exception:
-            pass
-        if self.icon:
-            self.icon.stop()
+            try: self.flask_proc.terminate()
+            except Exception: pass
+        try: os.remove(LOCK_FILE)
+        except Exception: pass
+        if self.icon: self.icon.stop()
 
     def notify(self, msg):
         if self.icon:
-            try:
-                self.icon.notify(msg, APP_NAME)
-            except Exception:
-                pass
+            try: self.icon.notify(msg, APP_NAME)
+            except Exception: pass
 
     # --- Status polling ---
-    def refresh_status(self):
-        s = api_call('/api/status')
+    def _refresh(self):
+        s = api('/api/status')
         if s:
             self.status = s
         else:
             self.status = {'clash': {'proxy_port': check_port(MIXED_PORT)}}
-        # Cache npm status (avoid blocking menu render)
+        # Mode + TUN + allow-lan from Clash API
         try:
-            r = api_call('/api/npm/status', timeout=2)
+            import json, urllib.request
+            req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs')
+            if CLASH_API_SECRET:
+                req.add_header('Authorization', f'Bearer {CLASH_API_SECRET}')
+            cfg = json.loads(urllib.request.urlopen(req, timeout=3).read())
+            self._mode = cfg.get('mode', 'rule')
+            self._tun_on = cfg.get('tun', {}).get('enable', False)
+            self._allow_lan = cfg.get('allow-lan', False)
+        except Exception: pass
+        # Guard
+        try:
+            g = api('/api/proxy/guard', timeout=2)
+            self._guard_on = g.get('enabled', False) if g else False
+        except Exception: pass
+        # NPM
+        try:
+            r = api('/api/npm/status', timeout=2)
             self._npm_on = r.get('enabled', False) if r else False
-        except Exception:
-            pass
-        # Cache traffic
+        except Exception: pass
+        # Traffic speed (delta)
         try:
-            t = api_call('/api/traffic', timeout=2)
+            t = api('/api/traffic', timeout=2)
             if t and t.get('ok'):
-                self._traffic = {'up': t.get('upload', 0), 'down': t.get('download', 0)}
-        except Exception:
-            pass
+                ul, dl = t.get('upload', 0), t.get('download', 0)
+                if self._prev_ul > 0:
+                    self._speed_up = max(0, ul - self._prev_ul) // POLL_INTERVAL
+                    self._speed_down = max(0, dl - self._prev_dl) // POLL_INTERVAL
+                self._prev_ul, self._prev_dl = ul, dl
+        except Exception: pass
+        # Proxy groups
+        try:
+            pg = api('/api/proxies', timeout=5)
+            if pg and pg.get('groups'):
+                self._groups = pg['groups']
+                for g in self._groups:
+                    if g.get('type') == 'Selector' and g.get('now'):
+                        self._current_node = g['now']
+                        break
+        except Exception: pass
+        # Update icon + tooltip
         if self.icon:
             self.icon.icon = self.current_icon()
             self.icon.title = self.current_title()
 
-    def status_loop(self):
+    def _update_menu(self):
+        if self.icon:
+            try: self.icon.menu = self.create_menu()
+            except Exception: pass
+
+    def _status_loop(self):
         while self.running:
             try:
-                self.refresh_status()
-            except Exception:
-                pass
+                self._refresh()
+                self._update_menu()
+            except Exception: pass
             time.sleep(POLL_INTERVAL)
 
     # --- Main entry ---
     def run(self):
-        # 1. Start clash-meta engine
         engine_ok = start_clash_meta()
-
-        # 2. Start Flask web UI
         self.flask_proc = start_flask_server()
         time.sleep(1)
-
-        # 3. Initial status
-        self.refresh_status()
-
-        # 3.5 Notify startup result
+        self._refresh()
         if not engine_ok:
-            self.notify('⚠ clash-meta 启动失败，请检查配置')
+            self.notify('clash-meta 启动失败')
         elif not check_port(WEB_PORT):
-            self.notify('⚠ Web UI 启动失败')
-
-        # 4. Auto-open browser
+            self.notify('Web UI 启动失败')
         if check_port(WEB_PORT):
             webbrowser.open(f'http://127.0.0.1:{WEB_PORT}')
-
-        # 5. Status polling thread
-        threading.Thread(target=self.status_loop, daemon=True).start()
-
-        # 6. System tray (blocks main thread)
-        self.icon = pystray.Icon(
-            'vpn-manager',
-            self.current_icon(),
-            self.current_title(),
-            self.create_menu()
-        )
+        threading.Thread(target=self._status_loop, daemon=True).start()
+        self.icon = pystray.Icon('vpn-manager', self.current_icon(),
+                                 self.current_title(), self.create_menu())
         self.icon.run()
 
 
-def _fmt_speed(bps):
-    """Format bytes/s to human readable"""
-    if bps < 1024:
-        return f'{bps}B/s'
-    elif bps < 1024 * 1024:
-        return f'{bps/1024:.1f}KB/s'
-    else:
-        return f'{bps/1024/1024:.1f}MB/s'
-
-
+# ==================== Lock + Entry ====================
 def acquire_lock():
-    """Prevent duplicate tray instances via lock file"""
     if os.path.isfile(LOCK_FILE):
         try:
             pid = int(open(LOCK_FILE).read().strip())
-            # Check if PID is still running
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-                return False  # Process exists - already running
-        except (ValueError, OSError):
-            pass  # Stale lock
+            if pid == os.getpid():
+                return True
+            import subprocess as _sp
+            out = _sp.run(['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'],
+                          capture_output=True, text=True, creationflags=CREATE_NO_WINDOW).stdout
+            if 'pythonw' in out.lower() or 'python' in out.lower():
+                return False
+        except (ValueError, OSError): pass
     with open(LOCK_FILE, 'w') as f:
         f.write(str(os.getpid()))
     return True
 
 
-# ==================== Entry Point ====================
 if __name__ == '__main__':
     if not acquire_lock():
-        # Already running, just open browser
         webbrowser.open(f'http://127.0.0.1:{WEB_PORT}')
         sys.exit(0)
     try:
-        app = VPNTrayApp()
-        app.run()
+        VPNTrayApp().run()
     finally:
-        try:
-            os.remove(LOCK_FILE)
-        except Exception:
-            pass
+        try: os.remove(LOCK_FILE)
+        except Exception: pass

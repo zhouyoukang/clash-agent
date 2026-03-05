@@ -19,6 +19,24 @@ API_PORT = 9097
 API_BASE = f'http://127.0.0.1:{API_PORT}'
 REG_PATH = r'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
 
+# Comprehensive proxy bypass list (sites that should NEVER go through proxy)
+BYPASS_LIST = ';'.join([
+    'localhost', '127.*', '10.*', '192.168.*',
+    '172.16.*','172.17.*','172.18.*','172.19.*','172.20.*',
+    '172.21.*','172.22.*','172.23.*','172.24.*','172.25.*',
+    '172.26.*','172.27.*','172.28.*','172.29.*','172.30.*','172.31.*',
+    '<local>',
+    '*.baidu.com','*.baidupcs.com','*.bdpan.com',
+    '*.bilibili.com','*.bilivideo.com','*.hdslb.com','*.biliapi.net',
+    '*.quark.cn','*.yunpan.cn',
+    '*.chaoxing.com','*.zhihuishu.com',
+    '*.taobao.com','*.tmall.com','*.alipay.com','*.alicdn.com','*.aliyuncs.com',
+    '*.jd.com','*.qq.com','*.weixin.qq.com','*.wechat.com',
+    '*.douyin.com','*.bytedance.com','*.toutiao.com',
+    '*.xju.edu.cn','*.3chuang.net','*.sanxianjiyi.com',
+    'aiotvr.xyz','*.aiotvr.xyz','hf-mirror.com','*.hf-mirror.com',
+])
+
 # App categories: name -> {need_vpn, reason, process_names}
 APP_CATEGORIES = {
     "browsers": {
@@ -113,12 +131,29 @@ def get_app_rules():
                 parts = rule.split(',')
                 if len(parts) == 3:
                     rules[parts[1]] = parts[2]
-    except:
+    except Exception:
         pass
     return rules
 
+def _sanitize_process_name(name):
+    """Sanitize process name to prevent YAML injection"""
+    if not name or not isinstance(name, str):
+        return None
+    import re as _re
+    name = name.strip()
+    if not _re.match(r'^[\w.-]+\.exe$', name, _re.IGNORECASE):
+        return None
+    if len(name) > 100:
+        return None
+    return name
+
 def set_app_rule(process_name, route):
     """Set PROCESS-NAME rule for an app and reload Clash config"""
+    process_name = _sanitize_process_name(process_name)
+    if not process_name:
+        return False
+    if route not in ('DIRECT', 'PROXY', 'REJECT'):
+        return False
     try:
         with open(CLASH_CONFIG, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f)
@@ -146,6 +181,14 @@ def set_app_rule(process_name, route):
         print(f"Error setting app rule: {e}")
         return False
 
+CLASH_API_SECRET = 'clash-agent-local'
+
+def _clash_headers():
+    h = {'Content-Type': 'application/json'}
+    if CLASH_API_SECRET:
+        h['Authorization'] = f'Bearer {CLASH_API_SECRET}'
+    return h
+
 def reload_clash_config():
     """Tell Clash to reload config file"""
     try:
@@ -153,26 +196,26 @@ def reload_clash_config():
         req = urllib.request.Request(
             f'{API_BASE}/configs?force=true',
             data=data, method='PUT',
-            headers={'Content-Type': 'application/json'}
+            headers=_clash_headers()
         )
         urllib.request.urlopen(req, timeout=15)
         return True
-    except:
+    except Exception:
         return False
 
 def clash_api(path, method='GET', data=None):
     """Generic Clash REST API caller"""
     try:
         url = f'{API_BASE}{path}'
+        headers = _clash_headers()
         if data:
             body = json.dumps(data).encode()
-            req = urllib.request.Request(url, data=body, method=method,
-                                        headers={'Content-Type': 'application/json'})
+            req = urllib.request.Request(url, data=body, method=method, headers=headers)
         else:
-            req = urllib.request.Request(url, method=method)
+            req = urllib.request.Request(url, method=method, headers=headers)
         resp = urllib.request.urlopen(req, timeout=8)
         return json.loads(resp.read())
-    except:
+    except Exception:
         return None
 
 def get_clash_connections():
@@ -186,7 +229,7 @@ def check_port(port):
         s.connect(('127.0.0.1', port))
         s.close()
         return True
-    except:
+    except Exception:
         return False
 
 def run_ps(cmd, timeout=10):
@@ -198,7 +241,7 @@ def run_ps(cmd, timeout=10):
             creationflags=0x08000000
         )
         return r.stdout.strip()
-    except:
+    except Exception:
         return ''
 
 # Windows system/driver processes to exclude from uncategorized list
@@ -209,7 +252,7 @@ SYSTEM_EXCLUDE = {
     'Copilot.exe', 'AppActions.exe', 'crashpad_handler.exe',
     'RuntimeBroker.exe', 'ApplicationFrameHost.exe', 'dwm.exe',
     'taskhostw.exe', 'sihost.exe', 'fontdrvhost.exe',
-    'clash-meta.exe', 'VPNManager.exe',  # VPN engine itself
+    'clash-meta.exe',  # VPN engine itself
 }
 
 def get_running_processes():
@@ -392,7 +435,7 @@ def api_proxy_system():
     if enable:
         run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyEnable -Value 1')
         run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyServer -Value "127.0.0.1:{MIXED_PORT}"')
-        run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyOverride -Value "localhost;127.*;10.*;192.168.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>"')
+        run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyOverride -Value "{BYPASS_LIST}"')
     else:
         run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyEnable -Value 0')
     return jsonify({'ok': True})
@@ -447,7 +490,7 @@ def api_quick_on():
         msgs.append('clash-meta already running')
     run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyEnable -Value 1')
     run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyServer -Value "127.0.0.1:{MIXED_PORT}"')
-    run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyOverride -Value "localhost;127.*;10.*;192.168.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>"')
+    run_ps(f'Set-ItemProperty "{REG_PATH}" -Name ProxyOverride -Value "{BYPASS_LIST}"')
     proxy = f'http://127.0.0.1:{MIXED_PORT}'
     run_ps(f'git config --global http.proxy {proxy}')
     run_ps(f'git config --global https.proxy {proxy}')
@@ -514,7 +557,7 @@ def api_proxies():
                 hist = ni.get('history', [])
                 if hist:
                     delay = hist[-1].get('delay', 0)
-                nodes.append({'name': n, 'type': ni.get('type', '?'), 'delay': delay})
+                nodes.append({'name': n, 'type': ni.get('type', '?'), 'delay': delay, 'udp': ni.get('udp', False), 'tfo': ni.get('tfo', False)})
             groups.append({'name': name, 'type': ptype, 'now': info.get('now', ''), 'nodes': nodes})
     groups.sort(key=lambda g: g['name'])
     return jsonify({'groups': groups})
@@ -624,19 +667,51 @@ def api_sub_update():
     gen_script = os.path.join(BASE_DIR, 'gen_config.py')
     if not os.path.isfile(gen_script):
         return jsonify({'ok': False, 'msg': 'gen_config.py 不存在'})
+    msgs = []
+    # Step 1: Try to download fresh subscription
+    sub_url, sub_dest = _find_sub_url()
+    if sub_url and sub_dest:
+        try:
+            curl_cmd = ['curl.exe', '-s', '-m', '30', '--ssl-no-revoke', '-A', 'clash-verge/v1.5.11',
+                        '--noproxy', '*', sub_url, '-o', sub_dest]
+            dl = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=35, creationflags=0x08000000)
+            if dl.returncode == 0 and os.path.getsize(sub_dest) > 1000:
+                msgs.append(f'\u8ba2\u9605\u4e0b\u8f7d\u6210\u529f ({os.path.getsize(sub_dest)//1024}KB)')
+            else:
+                msgs.append('\u8ba2\u9605\u4e0b\u8f7d\u5931\u8d25\uff0c\u4f7f\u7528\u672c\u5730\u7f13\u5b58')
+        except Exception:
+            msgs.append('\u8ba2\u9605\u4e0b\u8f7d\u8d85\u65f6\uff0c\u4f7f\u7528\u672c\u5730\u7f13\u5b58')
+    # Step 2: Regenerate config
     try:
         r = subprocess.run([sys.executable, gen_script], capture_output=True, text=True, timeout=30, cwd=BASE_DIR, creationflags=0x08000000)
         if r.returncode == 0:
+            msgs.append(r.stdout.strip() or '\u914d\u7f6e\u5df2\u66f4\u65b0')
             reload_clash_config()
-            return jsonify({'ok': True, 'msg': r.stdout.strip() or '配置已更新'})
-        return jsonify({'ok': False, 'msg': r.stderr.strip() or r.stdout.strip() or '失败'})
+            return jsonify({'ok': True, 'msg': ' | '.join(msgs)})
+        return jsonify({'ok': False, 'msg': r.stderr.strip() or r.stdout.strip() or '\u5931\u8d25'})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)})
+
+def _find_sub_url():
+    """Find subscription URL from Clash Verge profiles.yaml"""
+    profiles_yaml = os.path.join(os.path.expanduser('~'), '.config', 'clash-verge', 'profiles', 'profiles.yaml')
+    if not os.path.isfile(profiles_yaml):
+        return None, None
+    try:
+        with open(profiles_yaml, 'r', encoding='utf-8') as f:
+            pdata = yaml.safe_load(f)
+        for item in pdata.get('items', []):
+            if item.get('type') == 'remote' and item.get('url'):
+                dest = os.path.join(os.path.expanduser('~'), '.config', 'clash-verge', 'profiles', item.get('file', 'subscription.yaml'))
+                return item['url'], dest
+    except Exception:
+        pass
+    return None, None
 
 @app.route('/api/version')
 def api_version():
     v = clash_api('/version') if check_port(API_PORT) else None
-    return jsonify({'manager': 'v3.5', 'engine': v.get('version','?') if v else '未运行'})
+    return jsonify({'manager': 'v4.0', 'engine': v.get('version','?') if v else '未运行'})
 
 @app.route('/api/traffic')
 def api_traffic():
@@ -695,6 +770,28 @@ def api_tun_toggle():
         req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH', headers={'Content-Type': 'application/json'})
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'msg': f'TUN模式已{"开启" if enable else "关闭"}'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+@app.route('/api/mode')
+def api_mode_get():
+    """Get current proxy mode (rule/global/direct)"""
+    d = clash_api('/configs')
+    if not d: return jsonify({'ok': False, 'mode': 'unknown'})
+    return jsonify({'ok': True, 'mode': d.get('mode', 'rule')})
+
+@app.route('/api/mode', methods=['POST'])
+def api_mode_set():
+    """Switch proxy mode"""
+    data = request.get_json(silent=True) or {}
+    mode = data.get('mode', 'rule')
+    if mode not in ('rule', 'global', 'direct'):
+        return jsonify({'ok': False, 'msg': 'Invalid mode'})
+    try:
+        payload = json.dumps({'mode': mode}).encode()
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH', headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=5)
+        return jsonify({'ok': True, 'mode': mode, 'msg': f'模式切换为 {mode}'})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)})
 
@@ -822,7 +919,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VPN Manager v3.5</title>
+<title>VPN Manager v4.0</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -1064,13 +1161,69 @@ h1 { text-align:center; font-size:1.6rem; margin-bottom:4px; background:linear-g
 .prov-detail { color:#64748b; font-size:.7rem; margin-top:2px; }
 .prov-btn { background:#1e40af; color:#e2e8f0; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:.75rem; }
 .prov-btn:hover { background:#2563eb; }
+
+/* Mode switching bar */
+.mode-bar { display:flex; gap:4px; margin-bottom:14px; background:#1e293b; border-radius:10px; padding:3px; border:1px solid #334155; }
+.mode-btn { flex:1; padding:10px 8px; border:none; border-radius:8px; font-size:0.85rem; font-weight:600; cursor:pointer; background:transparent; color:#94a3b8; transition:.2s; text-align:center; }
+.mode-btn:hover { color:#e2e8f0; background:#263548; }
+.mode-btn.active { background:#334155; color:#60a5fa; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+.mode-btn .mode-icon { font-size:1rem; margin-right:4px; }
+
+/* Node card grid */
+.node-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:10px; }
+@media(max-width:600px) { .node-grid { grid-template-columns:1fr; } }
+.node-card { background:#0f172a; border:1px solid #334155; border-radius:10px; padding:10px 12px; cursor:pointer; transition:all .2s; position:relative; border-left:3px solid transparent; }
+.node-card:hover { background:#1a2744; border-color:#475569; transform:translateY(-1px); }
+.node-card.selected { background:#1e3a5f; border-left-color:#60a5fa; border-color:#3b82f6; }
+.node-card .nc-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.node-card .nc-name { font-size:0.88rem; font-weight:600; color:#e2e8f0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.node-card .nc-check { padding:3px 10px; border:1px solid #475569; border-radius:6px; background:transparent; color:#94a3b8; font-size:0.72rem; font-weight:500; cursor:pointer; transition:.2s; flex-shrink:0; }
+.node-card .nc-check:hover { border-color:#60a5fa; color:#60a5fa; background:#1e3a5f; }
+.node-card .nc-check.testing { color:#fbbf24; border-color:#fbbf24; }
+.node-card .nc-bottom { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.nc-badge { font-size:0.62rem; padding:2px 6px; border-radius:4px; font-weight:600; letter-spacing:.3px; }
+.nc-badge.proto { background:#334155; color:#94a3b8; }
+.nc-badge.proto-trojan { background:#7c3aed20; color:#a78bfa; border:1px solid #7c3aed40; }
+.nc-badge.proto-vmess { background:#2563eb20; color:#60a5fa; border:1px solid #2563eb40; }
+.nc-badge.proto-ss { background:#059669; color:white; }
+.nc-badge.proto-ssr { background:#d97706; color:white; }
+.nc-badge.proto-vless { background:#0891b2; color:white; }
+.nc-badge.proto-hysteria { background:#db2777; color:white; }
+.nc-badge.feat { background:#475569; color:#cbd5e1; }
+.nc-badge.feat-udp { background:#065f4620; color:#34d399; border:1px solid #065f4640; }
+.nc-badge.feat-tfo { background:#92400e20; color:#fbbf24; border:1px solid #92400e40; }
+.nc-delay { font-size:0.75rem; font-weight:600; margin-left:auto; font-family:'Cascadia Code',monospace; }
+.nc-delay.fast { color:#4ade80; }
+.nc-delay.medium { color:#fbbf24; }
+.nc-delay.slow { color:#f87171; }
+.nc-delay.timeout { color:#475569; }
+
+/* Enhanced group header */
+.pg-header-v2 { display:flex; align-items:center; padding:12px 14px; cursor:pointer; gap:10px; }
+.pg-header-v2:hover { opacity:.85; }
+.pg-header-v2 .pg-icon { font-size:1.1rem; }
+.pg-header-v2 .pg-info { flex:1; }
+.pg-header-v2 .pg-name { font-weight:600; font-size:.92rem; }
+.pg-header-v2 .pg-sub { font-size:.7rem; color:#64748b; margin-top:2px; }
+.pg-header-v2 .pg-actions { display:flex; gap:6px; align-items:center; }
+.pg-action-btn { background:none; border:1px solid #334155; border-radius:6px; padding:4px 8px; cursor:pointer; color:#94a3b8; font-size:.75rem; transition:.2s; }
+.pg-action-btn:hover { border-color:#60a5fa; color:#60a5fa; background:#1e3a5f; }
+.pg-action-btn.active { border-color:#4ade80; color:#4ade80; }
+
+/* Node sorting/filter bar */
+.node-toolbar { display:flex; align-items:center; gap:8px; padding:8px 14px; border-top:1px solid #334155; background:#1a2332; }
+.node-toolbar select { background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:6px; padding:4px 8px; font-size:.75rem; outline:none; cursor:pointer; }
+.node-toolbar select:focus { border-color:#60a5fa; }
+.node-toolbar .node-count { font-size:.72rem; color:#64748b; margin-left:auto; }
+.node-search { flex:1; max-width:200px; padding:4px 10px; background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:6px; font-size:.75rem; outline:none; }
+.node-search:focus { border-color:#60a5fa; }
 </style>
 </head>
 <body>
 <div id="toast"></div>
 <div class="container">
     <h1>VPN Manager</h1>
-    <p class="subtitle">按应用智能路由 · Mihomo 内核 · 进程级精确匹配 · v3.5</p>
+    <p class="subtitle">按应用智能路由 · Mihomo 内核 · 进程级精确匹配 · v4.0</p>
 
     <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('overview')">&#9889; 概览</button>
@@ -1158,9 +1311,15 @@ h1 { text-align:center; font-size:1.6rem; margin-bottom:4px; background:linear-g
     </div><!-- /pane-apps -->
 
     <div class="tab-pane" id="pane-nodes">
+    <div class="mode-bar" id="modeBar">
+        <button class="mode-btn" onclick="switchMode('global')" id="modeGlobal"><span class="mode-icon">&#127760;</span> Global</button>
+        <button class="mode-btn active" onclick="switchMode('rule')" id="modeRule"><span class="mode-icon">&#128279;</span> Rule</button>
+        <button class="mode-btn" onclick="switchMode('direct')" id="modeDirect"><span class="mode-icon">&#10132;</span> Direct</button>
+    </div>
     <div class="actions" style="margin-bottom:10px">
         <button class="btn btn-blue" onclick="loadProxies()" id="btnLoadNodes">&#128260; 刷新节点</button>
         <button class="btn btn-amber" onclick="testAllDelays()" id="btnTestAll">&#9201; 全部测速</button>
+        <input class="node-search" id="nodeSearchGlobal" placeholder="搜索节点..." oninput="filterNodes()" style="margin-left:auto">
     </div>
     <div id="proxyGroups"><div style="color:#64748b;padding:20px;text-align:center">点击「刷新节点」加载代理组</div></div>
     </div><!-- /pane-nodes -->
@@ -1536,64 +1695,189 @@ function switchTab(tab) {
     if(tab==='logs') startLogStream();
 }
 
+// ===== Mode switching =====
+let currentMode = 'rule';
+async function loadMode() {
+    const d = await api('/api/mode');
+    if(d&&d.ok) { currentMode = d.mode; updateModeUI(); }
+}
+function updateModeUI() {
+    ['global','rule','direct'].forEach(m => {
+        const btn = document.getElementById('mode'+m.charAt(0).toUpperCase()+m.slice(1));
+        if(btn) btn.classList.toggle('active', m===currentMode);
+    });
+    const modeEl = document.getElementById('eiMode');
+    if(modeEl) modeEl.textContent = currentMode;
+}
+async function switchMode(mode) {
+    const d = await api('/api/mode','POST',{mode});
+    if(d&&d.ok) { currentMode = mode; updateModeUI(); toast(d.msg,'ok'); }
+    else toast('模式切换失败','err');
+}
+
 // ===== Proxy nodes =====
 let proxyData = [];
+let nodeSortBy = 'default';
+let expandedGroups = new Set();
+
 async function loadProxies() {
     const el = document.getElementById('proxyGroups');
     el.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center"><span class="spinner"></span> 加载中...</div>';
-    const d = await api('/api/proxies');
-    if(!d || !d.groups.length) { el.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center">无代理组（引擎未运行？）</div>'; return; }
-    proxyData = d.groups;
+    const [pd, md] = await Promise.all([api('/api/proxies'), api('/api/mode')]);
+    if(!pd || !pd.groups.length) { el.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center">无代理组（引擎未运行？）</div>'; return; }
+    proxyData = pd.groups;
+    if(md&&md.ok) { currentMode = md.mode; updateModeUI(); }
     renderProxies();
 }
-function renderProxies() {
+
+function protoBadgeClass(type) {
+    const t = (type||'').toLowerCase();
+    if(t==='trojan') return 'proto-trojan';
+    if(t==='vmess') return 'proto-vmess';
+    if(t==='vless') return 'proto-vless';
+    if(t.includes('hysteria')) return 'proto-hysteria';
+    if(t==='ss'||t==='shadowsocks') return 'proto-ss';
+    if(t==='ssr') return 'proto-ssr';
+    return 'proto';
+}
+
+function groupIcon(type) {
+    if(type==='Selector') return '&#128279;';
+    if(type==='URLTest') return '&#9201;';
+    if(type==='Fallback') return '&#128737;';
+    if(type==='LoadBalance') return '&#9878;';
+    return '&#128279;';
+}
+
+function sortNodes(nodes) {
+    if(nodeSortBy==='delay') return [...nodes].sort((a,b)=>{
+        const da=a.delay>0?a.delay:99999, db=b.delay>0?b.delay:99999;
+        return da-db;
+    });
+    if(nodeSortBy==='name') return [...nodes].sort((a,b)=>a.name.localeCompare(b.name));
+    if(nodeSortBy==='type') return [...nodes].sort((a,b)=>(a.type||'').localeCompare(b.type||''));
+    return nodes;
+}
+
+function filterNodes() {
+    const q = (document.getElementById('nodeSearchGlobal')||{}).value||'';
+    renderProxies(q.trim().toLowerCase());
+}
+
+function renderProxies(filter) {
     const el = document.getElementById('proxyGroups');
     el.innerHTML = proxyData.map(g => {
         const isSelector = g.type === 'Selector';
+        const expanded = expandedGroups.has(g.name);
+        let nodes = sortNodes(g.nodes);
+        if(filter) nodes = nodes.filter(n => n.name.toLowerCase().includes(filter) || (n.type||'').toLowerCase().includes(filter));
+        const nodeCount = g.nodes.length;
+        const aliveCount = g.nodes.filter(n=>n.delay>0).length;
+
         return `<div class="proxy-group">
-            <div class="pg-header" onclick="togglePG(this)">
-                <div><span class="pg-name">${g.name}</span> <span class="pg-type">${g.type}</span></div>
-                <span class="pg-now">${g.now||'-'}</span>
+            <div class="pg-header-v2" onclick="togglePG2('${esc(g.name)}')">
+                <span class="pg-icon">${groupIcon(g.type)}</span>
+                <div class="pg-info">
+                    <div class="pg-name">${escHtml(g.name)} <span class="pg-type">${g.type}</span></div>
+                    <div class="pg-sub">${g.now ? escHtml(g.now) : '-'} · ${aliveCount}/${nodeCount} 可用</div>
+                </div>
+                <div class="pg-actions">
+                    <button class="pg-action-btn" onclick="event.stopPropagation();testGroupDelay('${esc(g.name)}')" title="测速全组">&#9201;</button>
+                    <button class="pg-action-btn" onclick="event.stopPropagation();togglePG2('${esc(g.name)}')" title="展开/收起">${expanded?'&#9650;':'&#9660;'}</button>
+                </div>
             </div>
-            <div class="pg-body" style="display:none">
-                ${g.nodes.map(n => {
+            ${expanded ? `<div class="node-toolbar">
+                <select onchange="nodeSortBy=this.value;renderProxies()">
+                    <option value="default"${nodeSortBy==='default'?' selected':''}>默认排序</option>
+                    <option value="delay"${nodeSortBy==='delay'?' selected':''}>延迟排序</option>
+                    <option value="name"${nodeSortBy==='name'?' selected':''}>名称排序</option>
+                    <option value="type"${nodeSortBy==='type'?' selected':''}>类型排序</option>
+                </select>
+                <span class="node-count">${nodes.length} 节点</span>
+            </div>
+            <div class="node-grid">
+                ${nodes.map(n => {
                     const sel = n.name === g.now ? ' selected' : '';
                     const dc = delayClass(n.delay);
                     const dl = n.delay > 0 ? n.delay+'ms' : (n.delay === 0 ? '-' : 'timeout');
-                    const click = isSelector ? ` onclick="selectNode('${g.name.replace(/'/g,"\\'")}','${n.name.replace(/'/g,"\\'")}')"` : '';
-                    return `<div class="node-row${sel}"${click}>
-                        <span class="node-name">${n.name}</span>
-                        <span class="node-type">${n.type}</span>
-                        <span class="node-delay ${dc}" id="nd-${css(n.name)}">${dl}</span>
+                    const click = isSelector ? ` onclick="selectNode('${esc(g.name)}','${esc(n.name)}')"` : '';
+                    const pbc = protoBadgeClass(n.type);
+                    return `<div class="node-card${sel}"${click}>
+                        <div class="nc-top">
+                            <span class="nc-name">${escHtml(n.name)}</span>
+                            <button class="nc-check" id="ck-${css(n.name)}" onclick="event.stopPropagation();checkNode('${esc(n.name)}','${esc(g.name)}')">Check</button>
+                        </div>
+                        <div class="nc-bottom">
+                            <span class="nc-badge ${pbc}">${escHtml(n.type)}</span>
+                            ${n.udp?'<span class="nc-badge feat-udp">UDP</span>':''}
+                            ${n.tfo?'<span class="nc-badge feat-tfo">TFO</span>':''}
+                            <span class="nc-delay ${dc}" id="nd-${css(n.name)}">${dl}</span>
+                        </div>
                     </div>`;
                 }).join('')}
-            </div>
+            </div>` : ''}
         </div>`;
     }).join('');
 }
+
+function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;')}
 function css(s){return s.replace(/[^a-zA-Z0-9]/g,'_')}
 function delayClass(d){if(d<=0)return 'timeout';if(d<200)return 'fast';if(d<500)return 'medium';return 'slow'}
-function togglePG(hdr){const b=hdr.nextElementSibling;b.style.display=b.style.display==='none'?'':'none'}
+
+function togglePG2(name) {
+    if(expandedGroups.has(name)) expandedGroups.delete(name);
+    else expandedGroups.add(name);
+    renderProxies();
+}
+
 async function selectNode(group, name) {
     const r = await api(`/api/proxies/${encodeURIComponent(group)}/select`,'POST',{name});
     if(r&&r.ok) { toast(r.msg,'ok'); loadProxies(); }
     else toast('切换失败','err');
 }
+
+async function checkNode(name, group) {
+    const ck = document.getElementById('ck-'+css(name));
+    if(ck) { ck.textContent = '...'; ck.classList.add('testing'); }
+    const r = await api(`/api/proxies/${encodeURIComponent(name)}/delay`,'POST');
+    const node = proxyData.flatMap(g=>g.nodes).find(n=>n.name===name);
+    if(r&&r.ok) {
+        if(node) node.delay = r.delay;
+        const el = document.getElementById('nd-'+css(name));
+        if(el) { el.textContent = r.delay+'ms'; el.className='nc-delay '+delayClass(r.delay); }
+        if(ck) { ck.textContent = 'Check'; ck.classList.remove('testing'); }
+    } else {
+        if(node) node.delay = -1;
+        const el = document.getElementById('nd-'+css(name));
+        if(el) { el.textContent = 'timeout'; el.className='nc-delay timeout'; }
+        if(ck) { ck.textContent = 'Check'; ck.classList.remove('testing'); }
+    }
+}
+
+async function testGroupDelay(group) {
+    toast('正在测速: '+group,'info');
+    const r = await api(`/api/proxies/${encodeURIComponent(group)}/delay-all`,'POST');
+    if(r&&r.ok&&r.delays) {
+        const g = proxyData.find(g=>g.name===group);
+        if(g) {
+            for(const [name,delay] of Object.entries(r.delays)) {
+                const node = g.nodes.find(n=>n.name===name);
+                if(node) node.delay = typeof delay==='number'?delay:0;
+                const el = document.getElementById('nd-'+css(name));
+                if(el) { el.textContent = typeof delay==='number'&&delay>0?delay+'ms':'timeout'; el.className='nc-delay '+delayClass(typeof delay==='number'?delay:0); }
+            }
+        }
+        toast('测速完成: '+group,'ok');
+    } else { toast('测速失败','err'); }
+}
+
 async function testAllDelays() {
     if(!proxyData.length) { toast('请先刷新节点','info'); return; }
     await withLoading('btnTestAll', async()=>{
         for(const g of proxyData) {
-            const r = await api(`/api/proxies/${encodeURIComponent(g.name)}/delay-all`,'POST');
-            if(r&&r.ok&&r.delays) {
-                for(const [name,delay] of Object.entries(r.delays)) {
-                    const node = g.nodes.find(n=>n.name===name);
-                    if(node) node.delay = typeof delay==='number'?delay:0;
-                    const el = document.getElementById('nd-'+css(name));
-                    if(el) { el.textContent = typeof delay==='number'&&delay>0?delay+'ms':'timeout'; el.className='node-delay '+delayClass(typeof delay==='number'?delay:0); }
-                }
-            }
+            await testGroupDelay(g.name);
         }
-        toast('测速完成','ok');
+        toast('全部测速完成','ok');
     });
 }
 
@@ -1867,6 +2151,7 @@ refresh = async function() {
     } catch(e) {}
     refreshGuardStatus();
     refreshEngineInfo();
+    loadMode();
 };
 
 refresh();
@@ -1882,7 +2167,7 @@ if __name__ == '__main__':
     port = 9098
     url = f'http://127.0.0.1:{port}'
     no_auto = '--no-auto' in sys.argv
-    print(f"VPN Manager v3.5 - 按应用智能路由")
+    print(f"VPN Manager v4.0 - 按应用智能路由")
     print(f"目录: {BASE_DIR}")
     print(f"管理面板: {url}")
     print(f"MetaCubeXD: http://127.0.0.1:{API_PORT}/ui/")
