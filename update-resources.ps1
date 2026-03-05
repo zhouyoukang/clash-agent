@@ -173,31 +173,24 @@ function Update-YacdMeta {
     Write-Host "`n[Yacd-meta] MetaCubeX/Yacd-meta 备选面板 (707★)" -ForegroundColor Cyan
     $yacdDir = Join-Path $BaseDir 'yacd'
 
-    try {
-        $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/MetaCubeX/Yacd-meta/releases/latest' -Proxy $Proxy -Headers $Headers -TimeoutSec 15
-        Write-Host "  最新版本: $($rel.tag_name)" -ForegroundColor Green
-    } catch {
-        Write-Host "  获取版本失败: $_" -ForegroundColor Red; return
-    }
-
-    $asset = $rel.assets | Where-Object { $_.name -match 'yacd' -and $_.name -match '\.tar\.gz$' } | Select-Object -First 1
-    if (-not $asset) {
-        $asset = $rel.assets | Where-Object { $_.name -match '\.tar\.gz$' } | Select-Object -First 1
-    }
-    if (-not $asset) { Write-Host "  未找到安装包" -ForegroundColor Red; return }
-
-    $tgz = Join-Path $BaseDir 'yacd-meta.tgz'
-    Write-Host "  下载 $($asset.name)..."
-    if (Get-WithProxy -Url $asset.browser_download_url -OutFile $tgz) {
+    # Yacd-meta 通过 gh-pages 分支分发，releases 无 assets
+    $zipUrl = 'https://github.com/MetaCubeX/Yacd-meta/archive/refs/heads/gh-pages.zip'
+    $zip = Join-Path $BaseDir 'yacd-meta.zip'
+    Write-Host "  下载 gh-pages 分支..."
+    if (Get-WithProxy -Url $zipUrl -OutFile $zip) {
         if (Test-Path $yacdDir) { Remove-Item $yacdDir -Recurse -Force }
-        New-Item -ItemType Directory -Path $yacdDir -Force | Out-Null
-        Push-Location $yacdDir
-        tar -xzf $tgz 2>&1 | Out-Null
-        Pop-Location
-        Remove-Item $tgz -Force -ErrorAction SilentlyContinue
-        $count = (Get-ChildItem $yacdDir -Recurse -File).Count
-        Write-Host "  已更新: $count 个文件 → $yacdDir" -ForegroundColor Green
-        Write-Host "  使用: 在 clash-config.yaml 中设置 external-ui: yacd" -ForegroundColor DarkGray
+        Expand-Archive -Path $zip -DestinationPath $BaseDir -Force
+        Remove-Item $zip -Force
+        # 解压后目录名为 Yacd-meta-gh-pages，重命名
+        $extracted = Join-Path $BaseDir 'Yacd-meta-gh-pages'
+        if (Test-Path $extracted) {
+            Rename-Item $extracted $yacdDir -Force
+            $count = (Get-ChildItem $yacdDir -Recurse -File).Count
+            Write-Host "  已更新: $count 个文件 → $yacdDir" -ForegroundColor Green
+            Write-Host "  使用: 在 clash-config.yaml 中设置 external-ui: yacd" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  解压后未找到目录" -ForegroundColor Red
+        }
     }
 }
 

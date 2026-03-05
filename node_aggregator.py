@@ -46,22 +46,12 @@ SOURCES = {
         'urls': [
             'https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list_raw.txt',
         ],
-        'format': 'base64',
-    },
-    'anaer': {
-        'name': 'anaer/Sub',
-        'stars': '3.5K',
-        'urls': [
-            'https://raw.githubusercontent.com/anaer/Sub/main/clash.yaml',
-        ],
-        'format': 'clash_yaml',
+        'format': 'raw_links',
     },
     'aiboboxx': {
         'name': 'aiboboxx/clashfree',
         'stars': '14K',
-        'urls': [
-            'https://raw.githubusercontent.com/aiboboxx/clashfree/main/clash.yml',
-        ],
+        'urls': 'dynamic',  # 使用日期命名: clash{YYYYMMDD}.yml
         'format': 'clash_yaml',
     },
 }
@@ -288,12 +278,33 @@ def aggregate(do_test=False):
     for src_id, src in SOURCES.items():
         print(f'[{src["name"]}] ({src["stars"]}★)')
         count = 0
-        for url in src['urls']:
+        urls = src['urls']
+        # aiboboxx 使用日期命名文件
+        if urls == 'dynamic' and src_id == 'aiboboxx':
+            today = datetime.now()
+            urls = []
+            for days_ago in range(0, 3):  # 尝试今天和前2天
+                from datetime import timedelta
+                d = today - timedelta(days=days_ago)
+                urls.append(f'https://raw.githubusercontent.com/aiboboxx/clashfree/main/clash{d.strftime("%Y%m%d")}.yml')
+        for url in urls:
             data = fetch_url(url)
             if not data:
                 continue
 
-            if src['format'] == 'base64':
+            if src['format'] == 'raw_links':
+                # 纯文本链接列表（每行一个 vmess:// trojan:// ss:// 链接）
+                text = data.decode('utf-8', errors='replace') if isinstance(data, bytes) else data
+                links = [l.strip() for l in text.strip().splitlines() if l.strip() and '://' in l.strip()]
+                print(f'  → {len(links)} 条链接')
+                for link in links:
+                    proxy = link_to_proxy(link)
+                    if proxy and proxy.get('server'):
+                        proxy = {k: v for k, v in proxy.items() if v is not None}
+                        all_proxies.append(proxy)
+                        count += 1
+
+            elif src['format'] == 'base64':
                 links = decode_base64_links(data)
                 print(f'  → {len(links)} 条链接')
                 for link in links:
@@ -403,11 +414,18 @@ def merge_to_config(config_path):
 
     added = 0
     free_names = []
+    used_names = {p.get('name', '') for p in existing}
     for p in free_proxies:
         fp = proxy_fingerprint(p)
         if fp not in existing_fps:
-            # 添加 [Free] 前缀避免名称冲突
-            p['name'] = f"[Free] {p.get('name', 'unnamed')}"
+            base_name = f"[Free] {p.get('name', 'unnamed')}"
+            name = base_name
+            counter = 2
+            while name in used_names:
+                name = f"{base_name} #{counter}"
+                counter += 1
+            p['name'] = name
+            used_names.add(name)
             existing.append(p)
             existing_fps.add(fp)
             added += 1
