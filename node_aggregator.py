@@ -7,8 +7,6 @@ Node Aggregator — 免费节点聚合器
   - ermaozi/get_subscribe (8.7K★)
   - aiboboxx/clashfree (14K★)
   - peasoft/NoMoreWalls (3K★)
-  - anaer/Sub (3.5K★)
-  - dongchengjie/airport (386★)
 
 用法:
   python node_aggregator.py                    # 抓取+去重+保存

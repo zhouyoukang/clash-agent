@@ -19,12 +19,15 @@
 ```text
 clash-agent/
 ├── vpn-app.pyw             ← 系统托盘编排器（推荐入口）
-├── vpn-manager.py          ← 核心: Flask 后端 + 嵌入式前端 (1892行)
+├── vpn-manager.py          ← 核心: Flask 后端 + 嵌入式前端 (1900行)
+├── proxy_sense.py          ← Agent代理五感感知 (状态/检查/修复/环境变量)
+├── node_aggregator.py      ← 免费节点聚合器 (4源, 去重+测速)
 ├── clash-config.yaml       ← 配置 (rule-providers + PROCESS-NAME)
 ├── proxy-manager.ps1       ← PowerShell CLI 管理
 ├── gen_config.py            ← 订阅→配置生成器 (含远程规则集)
 ├── update-resources.ps1    ← 一键更新面板/地理数据/内核
 ├── start.bat / stop.bat    ← 一键启停
+├── free-nodes.yaml         ← [gitignored] 聚合后的免费节点
 ├── _pyi_hook.py            ← PyInstaller 运行时钩子
 ├── 资源总览.md              ← GitHub Clash 生态全景索引
 ├── ui/                     ← [gitignored] MetaCubeXD 官方面板 (108文件)
