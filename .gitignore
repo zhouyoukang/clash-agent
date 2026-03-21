@@ -6,7 +6,9 @@ cache.db
 
 # 配置（含代理凭据）
 clash-config.yaml
+config.yaml
 subscription.yaml
+subscription-info.json
 
 # 下载资源（由 update-resources.ps1 管理）
 ui/
@@ -23,6 +25,16 @@ Country.mmdb
 clash-config.bootstrap.yaml
 free-nodes.yaml
 free-nodes-report.json
+profile.json
+
+# 辅助脚本（不随源码分发）
+node_aggregator.py
+_bagua_test.py
+
+# 历史文档（精华已归入 AGENTS.md / README.md）
+使用总览.md
+审计报告.md
+资源总览.md
 
 # Python
 __pycache__/

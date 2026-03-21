@@ -125,6 +125,7 @@ clash-meta.exe (Mihomo Engine)
 | `proxy-manager.ps1` | PowerShell CLI proxy manager |
 | `gen_config.py` | Subscription → config generator (preserves per-app rules) |
 | `update-resources.ps1` | One-click update: panel + geodata + engine |
+| `proxy_sense.py` | CLI proxy health check / env vars / auto-fix |
 | `clash-config.example.yaml` | Configuration template with full comments |
 | `start.bat` / `stop.bat` | One-click start / stop |
 
@@ -180,8 +181,6 @@ python -m venv .venv
 | [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) | 25K+ | 8 remote rulesets |
 | [Loyalsoldier/v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat) | 19K+ | Enhanced GeoIP + GeoSite |
 | [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) | — | Country.mmdb GeoIP2 |
-
-Full ecosystem index: [`资源总览.md`](资源总览.md)
 
 ---
 
