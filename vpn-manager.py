@@ -580,11 +580,11 @@ def api_proxy_select(group):
     try:
         body = json.dumps({'name': proxy_name}).encode()
         req = urllib.request.Request(f'{API_BASE}/proxies/{encoded}', data=body, method='PUT',
-                                    headers={'Content-Type': 'application/json'})
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'msg': f'{group} → {proxy_name}'})
-    except:
-        return jsonify({'ok': False})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
 
 @app.route('/api/proxies/<path:group>/delay-all', methods=['POST'])
 def api_proxy_delay_all(group):
@@ -736,7 +736,8 @@ def api_close_connection():
     conn_id = data.get('id', '')
     if not conn_id: return jsonify({'ok': False, 'msg': '缺少连接ID'})
     try:
-        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/connections/{conn_id}', method='DELETE')
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/connections/{conn_id}', method='DELETE',
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'msg': f'连接 {conn_id[:8]}... 已关闭'})
     except Exception as e:
@@ -746,7 +747,8 @@ def api_close_connection():
 def api_close_all_connections():
     """Close all active connections"""
     try:
-        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/connections', method='DELETE')
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/connections', method='DELETE',
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'msg': '所有连接已关闭'})
     except Exception as e:
@@ -767,7 +769,8 @@ def api_tun_toggle():
     enable = data.get('enable', False)
     try:
         payload = json.dumps({'tun': {'enable': enable}}).encode()
-        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH', headers={'Content-Type': 'application/json'})
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH',
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'msg': f'TUN模式已{"开启" if enable else "关闭"}'})
     except Exception as e:
@@ -789,7 +792,8 @@ def api_mode_set():
         return jsonify({'ok': False, 'msg': 'Invalid mode'})
     try:
         payload = json.dumps({'mode': mode}).encode()
-        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH', headers={'Content-Type': 'application/json'})
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH',
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=5)
         return jsonify({'ok': True, 'mode': mode, 'msg': f'模式切换为 {mode}'})
     except Exception as e:
@@ -800,9 +804,23 @@ def api_config_reload():
     """Reload Clash configuration file"""
     try:
         payload = json.dumps({'path': CLASH_CONFIG}).encode()
-        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs?force=true', data=payload, method='PUT', headers={'Content-Type': 'application/json'})
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs?force=true', data=payload, method='PUT',
+                                    headers=_clash_headers())
         urllib.request.urlopen(req, timeout=30)
         return jsonify({'ok': True, 'msg': '配置已重载'})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)})
+
+@app.route('/api/clash/config', methods=['PATCH'])
+def api_clash_config_patch():
+    """Patch Clash runtime config (allow-lan, mode, etc.)"""
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = json.dumps(data).encode()
+        req = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/configs', data=payload, method='PATCH',
+                                    headers=_clash_headers())
+        urllib.request.urlopen(req, timeout=5)
+        return jsonify({'ok': True, 'msg': '配置已更新'})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)})
 
